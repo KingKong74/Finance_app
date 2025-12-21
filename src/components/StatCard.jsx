@@ -1,3 +1,5 @@
+import React from "react";
+
 export default function StatCard({ title, value }) {
   return (
     <div
@@ -5,7 +7,8 @@ export default function StatCard({ title, value }) {
         padding: "1rem",
         borderRadius: "8px",
         background: "#f5f5f5",
-        minWidth: "200px"
+        minWidth: "200px",
+        boxShadow: "0 2px 5px rgba(0,0,0,0.1)"
       }}
     >
       <p style={{ margin: 0, color: "#555" }}>{title}</p>
