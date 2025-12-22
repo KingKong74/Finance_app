@@ -1,0 +1,167 @@
+/* ────────────────────────────── */
+/* Dashboard Sub-header           */
+/* ────────────────────────────── */
+.dashboard-subheader {
+  position: sticky;
+  top: 42px; /* height of main header; adjust if your header is taller */
+  z-index: 95; /* below main header but above page content */
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 2rem;
+  padding: 0.3rem 1.2rem;
+  background: #f5f7fa;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  margin-bottom: 0; /* ensure no extra gap */
+}
+
+/* Left: Timeframe */
+.dashboard-timeframe {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.65rem;
+  color: #555;
+}
+
+.dashboard-timeframe strong {
+  font-size: 0.95rem;
+  color: #000;
+}
+
+/* Centre: Market indicators */
+.dashboard-markets {
+  display: flex;
+  gap: 1.5rem;
+}
+
+.market-stat {
+  text-align: center;
+}
+
+.market-label {
+  font-size: 0.7rem;
+  color: #666;
+}
+
+.market-value {
+  font-weight: 600;
+}
+
+.market-value.pos {
+  color: #2e7d32;
+}
+
+.market-value.neg {
+  color: #c62828;
+}
+
+/* Right: Options button + dropdown */
+.dashboard-options {
+  position: relative;
+}
+
+.options-button {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+}
+
+/* Dropdown container */
+.options-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: white;
+  border: 1px solid rgba(0,0,0,0.1);
+  border-radius: 8px;
+  min-width: 112px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+  display: flex;
+  flex-direction: column;
+
+  /* Initial hidden state */
+  opacity: 0;
+  transform: translateY(-10px);
+  pointer-events: none;
+
+  /* Animation */
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 20;
+}
+
+/* Open state */
+.options-dropdown.open {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+/* Dropdown buttons */
+.options-dropdown button {
+  padding: 10px 12px;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.options-dropdown button:hover {
+  background: rgba(0,0,0,0.05);
+}
+
+/* ────────────────────────────── */
+/* Page content                   */
+/* ────────────────────────────── */
+.dashboard-page {
+  padding-left: 2rem;
+  padding-right: 2rem;
+  padding-bottom: 2rem;
+  padding-top: 0rem;
+}
+
+.dashboard-stats {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+}
+
+.dashboard-section {
+  margin-top: 2rem;
+}
+
+/* ───────────── Tabs ───────────── */
+.dashboard-tabs {
+  display: flex;
+  gap: 1.1rem;
+  padding: .8rem 2rem;
+  border-bottom: 1px solid rgba(0,0,0,0.08);
+  background: #f9fafc;
+  position: sticky;
+  top: 86px; /* sticky below subheader */
+  z-index: 85;
+}
+
+.dashboard-tab {
+  background: none;
+  border: none;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  font-weight: 500;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.dashboard-tab:hover {
+  color: #0d6efd;
+}
+
+.dashboard-tab.active {
+  border-bottom-color: #0d6efd;
+  font-weight: 600;
+  color: #0d6efd;
+}
+
+
