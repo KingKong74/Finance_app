@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
-import StatCard from "../components/StatCard";
-import "../css/dashboard.css";
+import "../../css/dashboard.css";
+import OverviewTab from "./tabs/Overview";
 
 export default function Dashboard() {
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("Dashboard");
   const dropdownRef = useRef(null);
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
@@ -18,11 +17,11 @@ export default function Dashboard() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const tabs = ["Dashboard", "Positions", "Performance", "Dividends", "*BLANK*"];
+  const tabs = ["Dashboard", "Positions", "Performance", "Dividends", "Account Management"];
 
   return (
     <div className="dashboard-content">
-      {/* Sticky dashboard subheader */}
+      {/* ─── Subheader ─── */}
       <div className="dashboard-subheader">
         <div className="dashboard-timeframe">
           <span>Current week</span>
@@ -39,7 +38,6 @@ export default function Dashboard() {
           <button
             className="options-button"
             onClick={() => setOpen(prev => !prev)}
-            aria-label="Dashboard options"
           >
             ⋯
           </button>
@@ -54,7 +52,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Sticky tabs */}
+      {/* ─── Tabs ─── */}
       <div className="dashboard-tabs">
         {tabs.map(tab => (
           <button
@@ -67,31 +65,13 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Main content scrolls beneath sticky elements */}
+      {/* ─── Tab Content ─── */}
       <div className="dashboard-page">
-        <h1>{activeTab === "Dashboard" ? "Portfolio Dashboard" : activeTab}</h1>
-
-        {activeTab === "Dashboard" && (
-          <>
-            <div className="dashboard-stats">
-              <StatCard title="Total Portfolio Value" value="$125,000" />
-              <StatCard title="Cash Balance" value="$18,500" />
-              <StatCard title="Monthly Cashflow" value="+$2,300" />
-            </div>
-
-            <div className="dashboard-section">
-              <h2>Portfolio overview</h2>
-              <p>Charts coming soon 📊</p>
-              <div style={{ height: "1000px" }} />
-            </div>
-          </>
-        )}
-
+        {activeTab === "Dashboard" && <OverviewTab />}
         {activeTab !== "Dashboard" && (
-          <div className="dashboard-section">
-            <p>Content for {activeTab} tab.</p>
-            <div style={{ height: "800px" }} />
-          </div>
+          <p style={{ padding: "2rem" }}>
+            {activeTab} tab coming soon
+          </p>
         )}
       </div>
     </div>
@@ -101,9 +81,11 @@ export default function Dashboard() {
 function MarketStat({ label, value }) {
   const positive = value.startsWith("+");
   return (
-    <div className="market-stat">
+    <div className="market-stat horizontal">
       <span className="market-label">{label}</span>
-      <span className={`market-value ${positive ? "pos" : "neg"}`}>{value}</span>
+      <span className={`market-value ${positive ? "pos" : "neg"}`}>
+        {value}
+      </span>
     </div>
   );
 }

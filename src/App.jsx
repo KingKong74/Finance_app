@@ -2,7 +2,7 @@ import React from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Menu from "./components/layout/Menu";
 import Landing from "./pages/Landing";
-import Dashboard from "./pages/Dashboard";
+import Dashboard from "./pages/dashboard/Dashboard";
 import Budget from "./pages/Budget";
 import Assets from "./pages/Assets";
 import Transactions from "./pages/Transactions";
