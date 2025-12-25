@@ -146,6 +146,8 @@
   position: sticky;
   top: 86px; /* sticky below subheader */
   z-index: 85;
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.05); /* subtle shadow */
+
 }
 
 .dashboard-tab {
@@ -167,5 +169,4 @@
   font-weight: 600;
   color: #0d6efd;
 }
-
 

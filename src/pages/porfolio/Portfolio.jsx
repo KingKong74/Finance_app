@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
 import "../../css/dashboard.css";
-import OverviewTab from "./tabs/Overview";
+import Overview from "./dashboard/overview/Overview"; 
 
 export default function Dashboard() {
   const [open, setOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState("Dashboard");
+  const [activeTab, setActiveTab] = useState("Overview"); // default tab
   const dropdownRef = useRef(null);
 
   useEffect(() => {
@@ -17,7 +17,7 @@ export default function Dashboard() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const tabs = ["Dashboard", "Positions", "Performance", "Dividends", "Account Management"];
+  const tabs = ["Overview", "Ledger", "Strategy", "Calculator", "Account Management"];
 
   return (
     <div className="dashboard-content">
@@ -67,8 +67,8 @@ export default function Dashboard() {
 
       {/* ─── Tab Content ─── */}
       <div className="dashboard-page">
-        {activeTab === "Dashboard" && <OverviewTab />}
-        {activeTab !== "Dashboard" && (
+        {activeTab === "Overview" && <Overview />}
+        {activeTab !== "Overview" && (
           <p style={{ padding: "2rem" }}>
             {activeTab} tab coming soon
           </p>

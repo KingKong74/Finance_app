@@ -3,7 +3,7 @@ import { NavLink } from "react-router-dom";
 import "../../css/sidebar.css";
 
 export default function Sidebar({ isOpen }) {
-  const navItems = ["Dashboard", "Budget", "Assets", "Transactions"];
+  const navItems = ["Portfolio", "Budget", "Assets", "Transactions"];
 
   return (
     <div className="sidebar-wrapper">

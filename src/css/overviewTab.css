@@ -1,0 +1,442 @@
+/* =========================================================
+   OVERVIEW LAYOUT
+   ========================================================= */
+
+.overview-grid-wrapper {
+  display: flex;              /* panel + main content side-by-side */
+  gap: 0rem;
+  position: relative;         /* anchor collapse button */
+  margin-top: -.1rem;
+  margin-left: -.1rem;
+  align-items: stretch;
+  min-height: 100vh;
+}
+
+.overview-main {
+  flex: 1;                    /* fills remaining space */
+  transition: margin-left 0.3s ease;
+}
+
+.main-content-wrapper {
+  flex: 1;
+}
+
+
+/* =========================================================
+   ACCOUNTS PANEL
+   ========================================================= */
+
+.accounts-panel {
+  background: #fff;
+  border: 1px solid rgba(0,0,0,0.08);
+  padding: 1rem;
+  width: 230px;
+  min-width: 230px;
+  overflow-y: auto;
+  transition: width 0.3s ease, padding 0.3s ease;
+  z-index: 0;
+  
+  position: sticky;
+  top: 1rem;
+  /* align-self: flex-start; makes sticky work in flex */
+  max-height: calc(100vh - 2rem); /* optional: prevents panel from growing past viewport */
+  top: 144px;
+}
+
+.accounts-panel.closed {
+  width: 0;
+  min-width: 0;
+  padding: 0;
+}
+
+/* Panel header */
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.accounts-panel h3 {
+  margin: 0 0 0.75rem 0;
+}
+
+
+/* =========================================================
+   PANEL COLLAPSE BUTTON
+   ========================================================= */
+
+.panel-collapse-btn {
+  position: sticky;           
+  background: #4f5a6c47;
+  border: none;
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+  transition: left 0.3s ease;
+  max-height: 30px;
+  max-width: 30px;
+  transform: translatex(-50%);
+  margin-top: 12px;
+}
+
+.accounts-panel.closed ~ .panel-collapse-btn {
+  /* left: 0; */
+  transform: translatex(0%);
+}
+
+/* Scrollbar styling */
+.accounts-panel.open::-webkit-scrollbar {
+  width: 6px;
+}
+
+
+/* =========================================================
+   ACCOUNT LIST
+   ========================================================= */
+
+.account-wrapper {
+  position: relative;
+  padding: 0.5rem 0;
+  border-top: 1px solid rgba(0,0,0,0.06);
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+}
+
+.accounts-panel-wrapper {
+  position: sticky;    /* makes it stick relative to viewport */
+  top: 1rem;           /* distance from top of page */
+  align-self: flex-start; /* needed because parent is flex */
+  display: flex;       /* keeps panel + button side by side */
+  gap: 0rem;         /* spacing between panel and button */
+  z-index: 2;
+  top: 145px;
+}
+
+.account-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.account {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 0.4rem 0.75rem;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+}
+
+.account-wrapper.selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background-color: #0d6efd;
+  border-radius: 2px;
+}
+
+/* Left side */
+.account-name {
+  font-size: 0.9rem;
+  font-weight: 550;
+
+}
+
+/* Right side */
+.account-values {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.2;
+}
+
+.account-total {
+  font-size: 0.9rem;
+  font-weight: 550;
+}
+
+.account-day-pl {
+  font-size: 0.7rem;
+  opacity: 0.85;
+}
+
+.account-day-pl.pos {
+  color: #2e7d32;
+}
+
+.account-day-pl.neg {
+  color: #c62828;
+}
+
+/* Expand arrow */
+.expand-indicator {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.25rem;
+  display: flex;
+  align-items: center;
+}
+
+/* Base chevron */
+.chevron {
+  width: 10px;
+  height: 10px;
+  border-right: 2px solid #666;
+  border-bottom: 2px solid #666;
+  transform: rotate(45deg); /* down arrow */
+  position: relative;
+}
+
+/* Stem for the down arrow */
+.chevron::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  left: 3px;
+  width: 2px;
+  height: 0px;
+  background: #f5f5f5;
+}
+
+/* Open state = up arrow (no stem) */
+.expand-indicator.open .chevron {
+  transform: rotate(-135deg); /* up arrow */
+}
+
+.expand-indicator.open .chevron::after {
+  display: none;
+}
+
+/* =========================================================
+   ACCOUNT EXPANDED DETAILS
+   ========================================================= */
+
+.account-details {
+  padding: 0.25rem 0.75rem 0.5rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+
+/* =========================================================
+   SECONDARY OVERVIEW TABS
+   ========================================================= */
+
+.overview-secondary-tabs {
+  display: flex;
+  gap: 1.5rem;
+  border-bottom: 1px solid #e0e0e0;
+  margin: 2rem 0 1rem 2rem;
+}
+
+.overview-tab {
+  background: none;
+  border: none;
+  padding: 0.5rem 0;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  position: relative;
+  color: #333;
+}
+
+.overview-tab.active {
+  font-weight: 600;
+  color: #0d6efd;
+}
+
+.overview-tab.active::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background-color: #0d6efd;
+  border-radius: 2px 2px 0 0;
+}
+
+.overview-dashboard {
+  margin-top: 1.5rem; /* space under main chart */
+}
+
+.dashboard-charts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1rem;
+}
+
+/* =========================================================
+   PERFORMANCE CARD
+   ========================================================= */
+
+.performance-card {
+  background: #fff;
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 10px;
+  padding: .9rem;
+}
+
+
+/* =========================================================
+   PERFORMANCE HEADER
+   ========================================================= */
+
+.performance-header {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+}
+
+.perf-left,
+.perf-right {
+  display: flex;
+  flex-direction: column;
+}
+
+.perf-left {
+  min-width: 140px;
+}
+
+.perf-right {
+  margin-left: 0.5rem; /* nudged left slightly */
+}
+
+.perf-account-label,
+.perf-ror-label {
+  font-size: 0.7rem;
+  color: #999;
+  margin: 0;
+}
+
+.perf-account-total {
+  margin: 0;
+}
+
+.perf-ror-value {
+  font-weight: 600;
+}
+
+.perf-ror-value.pos {
+  color: #2e7d32;
+}
+
+.perf-ror-value.neg {
+  color: #c62828;
+}
+
+
+/* =========================================================
+   CHART
+   ========================================================= */
+
+.chart-wrapper {
+  position: relative;
+}
+
+/* ───────── Chart range footer (7D / MTD / YTD etc.) ───────── */
+
+.chart-range-footer {
+  display: flex;
+  justify-content: center;   /* centre horizontally */
+  align-items: center;
+  gap: 1.25rem;              /* more breathing room */
+  margin-top: 0.75rem;
+}
+
+/* Buttons */
+.chart-range-footer button {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.85rem;        /* slightly bigger */
+  font-weight: 500;
+  color: #666;
+  cursor: pointer;
+  transition: color 0.15s ease, font-weight 0.15s ease;
+}
+
+/* Hover */
+.chart-range-footer button:hover {
+  color: #0d6efd;
+}
+
+/* Active */
+.chart-range-footer button.active {
+  color: #0d6efd;
+  font-weight: 600;
+}
+
+/* =========================================================
+   CHART CARD
+   ========================================================= */
+
+.chart-card {
+  background: #fff;
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 10px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.chart-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.chart-card-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.chart-card-header p {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #999;
+}
+
+.chart-container {
+  width: 100%;
+  height: 300px; /* adjust for stacked/column charts if needed */
+}
+
+.pie-chart-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 300px;
+}
+
+.column-chart-bar {
+  border-radius: 4px;
+}
+
+.stacked-bar-legend {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.stacked-bar-legend span {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.stacked-bar-legend .color-box {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+}
