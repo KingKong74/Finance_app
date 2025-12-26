@@ -1,6 +1,6 @@
 import { MongoClient } from "mongodb";
 
-const uri = process.env.VITE_MONGO_URI; // or VITE_MONGO_URI if that's what you use
+const uri = process.env.MONGO_URI; 
 const client = new MongoClient(uri);
 
 async function testConnection() {

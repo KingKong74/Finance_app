@@ -1,16 +1,12 @@
-import React, { useState } from "react";
+import React from "react";
 
 export default function Strategy() {
-  const [status, setStatus] = useState("");
-
   const testInsert = async () => {
-    setStatus("Testing insert...");
-    const dummyTrade = {
+    const sampleTrade = {
       symbol: "AAPL",
-      type: "BUY",
-      amount: 10,
-      price: 150,
-      fee: 1.5,
+      price: 200,
+      quantity: 1,
+      type: "buy",
       date: new Date().toISOString(),
     };
 
@@ -18,29 +14,26 @@ export default function Strategy() {
       const res = await fetch("/api/trades", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(dummyTrade),
+        body: JSON.stringify(sampleTrade),
       });
 
       if (!res.ok) {
-        const text = await res.text(); // get raw error text from server
-        throw new Error(`API responded with status ${res.status}: ${text}`);
+        const text = await res.text();
+        console.error(`API responded with status ${res.status}:`, text);
+        return;
       }
 
       const data = await res.json();
-      setStatus(`Insert successful! Trade ID: ${data._id}`);
+      console.log("Trade inserted:", data);
     } catch (err) {
-      console.error("API insert error:", err);
-      setStatus(`Error inserting trade: ${err.message}`);
+      console.error("Error calling API:", err);
     }
   };
 
   return (
-    <div style={{ padding: "2rem" }}>
-      <h1>Test Trade Insert</h1>
-      <button onClick={testInsert} style={{ padding: "0.5rem 1rem" }}>
-        Insert Dummy Trade
-      </button>
-      <p>{status}</p>
+    <div style={{ padding: 20 }}>
+      <h1>DB Test Insert</h1>
+      <button onClick={testInsert}>Insert Sample Trade</button>
     </div>
   );
 }
