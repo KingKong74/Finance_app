@@ -1,4 +1,3 @@
-// /api/ledger/index.js
 import { connectToDB } from "../utils/db.js";
 
 function normaliseTab(tab) {
@@ -7,7 +6,6 @@ function normaliseTab(tab) {
   return allowed.includes(t) ? t : null;
 }
 
-// trades/crypto/forex go into "trades" collection with a `type` field
 function collectionForTab(tab) {
   return tab === "cash" ? "cash" : "trades";
 }
@@ -30,16 +28,17 @@ export default async function handler(req, res) {
       const payload = req.body || {};
 
       if (tab === "cash") {
-        // cash: no ticker, uses amount + entryType
         if (!payload.date) return res.status(400).json({ error: "date is required" });
         if (payload.amount === undefined || payload.amount === null || payload.amount === "")
           return res.status(400).json({ error: "amount is required" });
 
+        const amountNum = Number(payload.amount || 0);
+
         const doc = {
-          date: payload.date,                 // keep as string "YYYY-MM-DD" to match your UI filters
-          amount: Number(payload.amount || 0),
+          date: payload.date, // "YYYY-MM-DD"
+          amount: amountNum,
           currency: payload.currency || "AUD",
-          entryType: payload.entryType || "deposit", // deposit/withdrawal
+          entryType: payload.entryType || (amountNum >= 0 ? "deposit" : "withdrawal"),
           note: payload.note || "",
           createdAt: new Date(),
         };
@@ -48,20 +47,20 @@ export default async function handler(req, res) {
         return res.status(201).json({ _id: result.insertedId });
       }
 
-      // trades/crypto/forex:
+      // trades / crypto / forex
       if (!payload.ticker) return res.status(400).json({ error: "ticker is required" });
       if (!payload.date) return res.status(400).json({ error: "date is required" });
 
       const doc = {
         ticker: String(payload.ticker).toUpperCase(),
-        date: payload.date, // string "YYYY-MM-DD"
-        quantity: Number(payload.quantity || 0),
+        date: payload.date, // "YYYY-MM-DD"
+        quantity: Number(payload.quantity || 0), // negative sells stay negative ✅
         price: Number(payload.price || 0),
-        fee: Number(payload.fee || 0),
+        fee: Math.abs(Number(payload.fee || 0)),
         broker: payload.broker || "IBKR",
         currency: payload.currency || "USD",
         realisedPL: Number(payload.realisedPL || 0),
-        type: tab, // "trades" | "crypto" | "forex"
+        type: tab,
         createdAt: new Date(),
       };
 

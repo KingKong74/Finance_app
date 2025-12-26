@@ -1,4 +1,3 @@
-// /api/ledger/[id].js
 import { ObjectId } from "mongodb";
 import { connectToDB } from "../utils/db.js";
 

@@ -1,16 +1,44 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import "../../../css/ledgerTab.css";
+import ImportModal from "./components/ImportModal.jsx";
 
 const EXCHANGE_RATES = { USD: 1.65, EUR: 1.8, AUD: 1 };
 
-async function safeJson(res) {
-  const text = await res.text();
-  try {
-    return text ? JSON.parse(text) : null;
-  } catch {
-    // If Vercel returns an HTML error page, you'll see it here
-    throw new Error(`Non-JSON response (${res.status}): ${text.slice(0, 120)}`);
+function normaliseRow(row, tab) {
+  if (tab === "cash") {
+    const amount = Number(row.amount || 0);
+    return {
+      ...row,
+      amount,
+      currency: row.currency || "AUD",
+      entryType: row.entryType || (amount >= 0 ? "deposit" : "withdrawal"),
+    };
   }
+
+  const quantity = Number(row.quantity || 0);
+  const price = Number(row.price || 0);
+  const fee = Number(row.fee || 0);
+  const realisedPL = Number(row.realisedPL || 0);
+
+  const proceeds = quantity * price;
+  const basis = proceeds - fee;
+
+  return {
+    ...row,
+    ticker: row.ticker || row.symbol || "",
+    quantity,
+    price,
+    fee,
+    realisedPL,
+    proceeds,
+    basis,
+    currency: row.currency || "USD",
+    broker: row.broker || "IBKR",
+  };
+}
+
+function safeUpper(s) {
+  return String(s || "").toUpperCase();
 }
 
 export default function Ledger() {
@@ -20,6 +48,23 @@ export default function Ledger() {
   const [entries, setEntries] = useState([]);
   const [baseCurrency, setBaseCurrency] = useState("AUD");
 
+  const [showImport, setShowImport] = useState(false);
+
+  // Filters
+  const [filters, setFilters] = useState({
+    ticker: "",
+    date: "",
+    qty: "",
+    broker: "",
+    currency: "",
+  });
+
+  // Sorting
+  const [sortConfig, setSortConfig] = useState({ key: "", direction: "asc" });
+
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+
   const [newEntry, setNewEntry] = useState({
     ticker: "",
     date: "",
@@ -28,35 +73,27 @@ export default function Ledger() {
     fee: "",
     broker: "IBKR",
     currency: "USD",
-    type: "stock", // stock / crypto / cash / forex (frontend only)
-    entryType: "deposit", // cash: deposit / withdrawal
+    // cash fields
     amount: "",
+    entryType: "deposit",
   });
-
-  const [filters, setFilters] = useState({});
-  const [sortConfig, setSortConfig] = useState({ key: "", direction: "asc" });
-  const [currentPage, setCurrentPage] = useState(1);
-
-  // ------------------------
-  // API wiring (matches /api/ledger/index.js and /api/ledger/[id].js)
-  // ------------------------
 
   useEffect(() => {
     fetchData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // reset UI bits when switching tabs
+    setCollapsed({});
+    setCurrentPage(1);
+    setFilters({ ticker: "", date: "", qty: "", broker: "", currency: "" });
+    setSortConfig({ key: "", direction: "asc" });
   }, [activeTab]);
 
   const fetchData = async () => {
     try {
       const res = await fetch(`/api/ledger?tab=${activeTab}`);
       if (!res.ok) throw new Error(`GET failed: ${res.status}`);
-
-      const data = await safeJson(res);
+      const data = await res.json();
       const arr = Array.isArray(data) ? data : [];
-
-      const normalised = arr.map((row) => normaliseRow(row, activeTab));
-      setEntries(normalised);
-      setCurrentPage(1);
+      setEntries(arr.map((row) => normaliseRow(row, activeTab)));
     } catch (err) {
       console.error("Failed to fetch ledger data:", err);
     }
@@ -64,7 +101,25 @@ export default function Ledger() {
 
   const addEntry = async () => {
     try {
-      const payload = buildPayloadForTab(newEntry, activeTab);
+      const payload =
+        activeTab === "cash"
+          ? {
+              date: newEntry.date,
+              amount: Number(newEntry.amount || 0),
+              currency: newEntry.currency,
+              entryType: newEntry.entryType,
+              note: newEntry.note || "",
+            }
+          : {
+              ticker: safeUpper(newEntry.ticker),
+              date: newEntry.date,
+              quantity: Number(newEntry.quantity || 0),
+              price: Number(newEntry.price || 0),
+              fee: Math.abs(Number(newEntry.fee || 0)),
+              broker: newEntry.broker,
+              currency: newEntry.currency,
+              realisedPL: 0,
+            };
 
       const res = await fetch(`/api/ledger?tab=${activeTab}`, {
         method: "POST",
@@ -72,22 +127,19 @@ export default function Ledger() {
         body: JSON.stringify(payload),
       });
 
-      if (!res.ok) {
-        const msg = await res.text();
-        throw new Error(`POST failed: ${res.status} - ${msg}`);
-      }
+      if (!res.ok) throw new Error(`POST failed: ${res.status}`);
 
-      const json = await safeJson(res);
-      const insertedId = json?._id;
+      const json = await res.json();
+      const saved = normaliseRow({ ...payload, _id: json._id }, activeTab);
 
-      const saved = normaliseRow({ ...payload, _id: insertedId }, activeTab);
       setEntries((prev) => [saved, ...prev]);
       setCurrentPage(1);
 
-      // Optional: clear inputs (I keep date/currency/broker to speed entry)
+      // keep currency/broker, clear the rest
       setNewEntry((prev) => ({
         ...prev,
         ticker: "",
+        date: "",
         quantity: "",
         price: "",
         fee: "",
@@ -100,195 +152,133 @@ export default function Ledger() {
 
   const deleteEntry = async (id) => {
     try {
-      // IMPORTANT: delete must hit /api/ledger/[id]?tab=...
       const res = await fetch(`/api/ledger/${id}?tab=${activeTab}`, {
         method: "DELETE",
       });
-
-      if (!res.ok) {
-        const msg = await res.text();
-        throw new Error(`DELETE failed: ${res.status} - ${msg}`);
-      }
-
-      setEntries((prev) => prev.filter((t) => t._id !== id));
+      if (!res.ok) throw new Error(`DELETE failed: ${res.status}`);
+      setEntries((prev) => prev.filter((x) => x._id !== id));
     } catch (err) {
       console.error("Failed to delete entry:", err);
     }
   };
 
-  // ------------------------
-  // Helpers
-  // ------------------------
-
-  function buildPayloadForTab(entry, tab) {
-    if (tab === "cash") {
-      return {
-        date: entry.date,
-        amount: Number(entry.amount || 0),
-        currency: entry.currency || "AUD",
-        entryType: entry.entryType || "deposit",
-        note: entry.note || "",
-      };
-    }
-
-    // trades/crypto/forex
-    return {
-      ticker: (entry.ticker || "").toUpperCase(),
-      date: entry.date,
-      quantity: Number(entry.quantity || 0),
-      price: Number(entry.price || 0),
-      fee: Number(entry.fee || 0),
-      broker: entry.broker || "IBKR",
-      currency: entry.currency || "USD",
-      realisedPL: Number(entry.realisedPL || 0),
-      // backend sets "type" based on tab; but it's fine to send too
-      type: tab,
-    };
-  }
-
-  function normaliseRow(row, tab) {
-    if (tab === "cash") {
-      return {
-        ...row,
-        amount: Number(row.amount || 0),
-        currency: row.currency || "AUD",
-        entryType: row.entryType || "deposit",
-      };
-    }
-
-    const quantity = Number(row.quantity || 0);
-    const price = Number(row.price || 0);
-    const fee = Number(row.fee || 0);
-    const realisedPL = Number(row.realisedPL || 0);
-
-    const proceeds = quantity * price;
-    const basis = proceeds - fee;
-
-    return {
-      ...row,
-      ticker: (row.ticker || "").toUpperCase(),
-      quantity,
-      price,
-      fee,
-      realisedPL,
-      proceeds,
-      basis,
-      currency: row.currency || "USD",
-      broker: row.broker || "IBKR",
-    };
-  }
-
   const handleSort = (key) => {
-    let direction = "asc";
-    if (sortConfig.key === key && sortConfig.direction === "asc") direction = "desc";
-    setSortConfig({ key, direction });
+    setSortConfig((prev) => {
+      const direction =
+        prev.key === key && prev.direction === "asc" ? "desc" : "asc";
+      return { key, direction };
+    });
   };
 
-  const applySortAndFilter = (data) => {
-    const f = filters || {};
+  const filteredAndSorted = useMemo(() => {
+    const f = filters;
 
-    let filtered = data.filter((t) => {
+    let out = entries.filter((r) => {
       if (activeTab === "cash") {
         return (
-          (!f.date || t.date === f.date) &&
-          (!f.currency || t.currency === f.currency)
+          (!f.date || String(r.date) === f.date) &&
+          (!f.currency || r.currency === f.currency)
         );
       }
 
       return (
-        (!f.ticker || (t.ticker || "").includes((f.ticker || "").toUpperCase())) &&
-        (!f.date || t.date === f.date) &&
-        (!f.qty || Number(t.quantity) === Number(f.qty)) &&
-        (!f.broker || t.broker === f.broker) &&
-        (!f.currency || t.currency === f.currency)
+        (!f.ticker || safeUpper(r.ticker).includes(safeUpper(f.ticker))) &&
+        (!f.date || String(r.date) === f.date) &&
+        (!f.qty || Number(r.quantity) === Number(f.qty)) &&
+        (!f.broker || r.broker === f.broker) &&
+        (!f.currency || r.currency === f.currency)
       );
     });
 
     if (sortConfig.key) {
-      filtered.sort((a, b) => {
-        const valA = a[sortConfig.key] ?? 0;
-        const valB = b[sortConfig.key] ?? 0;
+      out.sort((a, b) => {
+        const va = a[sortConfig.key];
+        const vb = b[sortConfig.key];
 
-        // string-aware sort for ticker/broker/currency/date
-        const isString = typeof valA === "string" || typeof valB === "string";
+        // string compare for ticker/broker/date
+        const isString =
+          typeof va === "string" || typeof vb === "string" || sortConfig.key === "date";
         if (isString) {
-          const sa = String(valA ?? "");
-          const sb = String(valB ?? "");
+          const sa = String(va ?? "");
+          const sb = String(vb ?? "");
           if (sa < sb) return sortConfig.direction === "asc" ? -1 : 1;
           if (sa > sb) return sortConfig.direction === "asc" ? 1 : -1;
           return 0;
         }
 
-        if (valA < valB) return sortConfig.direction === "asc" ? -1 : 1;
-        if (valA > valB) return sortConfig.direction === "asc" ? 1 : -1;
+        const na = Number(va ?? 0);
+        const nb = Number(vb ?? 0);
+        if (na < nb) return sortConfig.direction === "asc" ? -1 : 1;
+        if (na > nb) return sortConfig.direction === "asc" ? 1 : -1;
         return 0;
       });
     }
 
-    return filtered;
-  };
+    return out;
+  }, [entries, filters, sortConfig, activeTab]);
 
-  const currentData = useMemo(() => applySortAndFilter(entries), [entries, filters, sortConfig, activeTab]);
-
-  const groupedByCurrency = useMemo(() => {
-    return currentData.reduce((acc, t) => {
-      const key = activeTab === "cash" ? t.currency : `${t.ticker}_${t.currency}`;
-      acc[key] = acc[key] || [];
-      acc[key].push(t);
+  const grouped = useMemo(() => {
+    return filteredAndSorted.reduce((acc, r) => {
+      const key = activeTab === "cash" ? r.currency : `${r.ticker}_${r.currency}`;
+      (acc[key] ||= []).push(r);
       return acc;
     }, {});
-  }, [currentData, activeTab]);
+  }, [filteredAndSorted, activeTab]);
 
   const totalsByCurrency = useMemo(() => {
-    return Object.values(groupedByCurrency).reduce((acc, rows) => {
+    return Object.values(grouped).reduce((acc, rows) => {
       const currency = rows[0]?.currency || "AUD";
 
       const subtotal = rows.reduce(
-        (a, t) => {
+        (a, r) => {
           if (activeTab === "cash") {
-            return { qty: 0, proceeds: a.proceeds + (t.amount || 0), fee: 0, realisedPL: 0 };
+            return { qty: 0, proceeds: a.proceeds + (r.amount || 0), fee: 0, realisedPL: 0 };
           }
           return {
-            qty: a.qty + (t.quantity || 0),
-            proceeds: a.proceeds + (t.proceeds || 0),
-            fee: a.fee + (t.fee || 0),
-            realisedPL: a.realisedPL + (t.realisedPL || 0),
+            qty: a.qty + (r.quantity || 0),
+            proceeds: a.proceeds + (r.proceeds || 0),
+            fee: a.fee + (r.fee || 0),
+            realisedPL: a.realisedPL + (r.realisedPL || 0),
           };
         },
         { qty: 0, proceeds: 0, fee: 0, realisedPL: 0 }
       );
 
-      acc[currency] = acc[currency] || { qty: 0, proceeds: 0, fee: 0, realisedPL: 0 };
+      acc[currency] ||= { qty: 0, proceeds: 0, fee: 0, realisedPL: 0 };
       acc[currency].qty += subtotal.qty;
       acc[currency].proceeds += subtotal.proceeds;
       acc[currency].fee += subtotal.fee;
       acc[currency].realisedPL += subtotal.realisedPL;
       return acc;
     }, {});
-  }, [groupedByCurrency, activeTab]);
+  }, [grouped, activeTab]);
 
   const grandTotalInBase = useMemo(() => {
     return Object.entries(totalsByCurrency).reduce(
       (acc, [currency, totals]) => {
         const rate = EXCHANGE_RATES[currency] ?? 1;
         const baseRate = EXCHANGE_RATES[baseCurrency] ?? 1;
-        const convert = (val) => (val * rate) / baseRate;
+        const convert = (val) => (Number(val || 0) * rate) / baseRate;
 
         return {
-          qty: acc.qty + (totals.qty || 0),
-          proceeds: acc.proceeds + convert(totals.proceeds || 0),
-          fee: acc.fee + convert(totals.fee || 0),
-          realisedPL: acc.realisedPL + convert(totals.realisedPL || 0),
+          qty: acc.qty + Number(totals.qty || 0),
+          proceeds: acc.proceeds + convert(totals.proceeds),
+          fee: acc.fee + convert(totals.fee),
+          realisedPL: acc.realisedPL + convert(totals.realisedPL),
         };
       },
       { qty: 0, proceeds: 0, fee: 0, realisedPL: 0 }
     );
   }, [totalsByCurrency, baseCurrency]);
 
-  const totalPages = Math.max(1, Math.ceil(currentData.length / rowLimit));
+  const totalPages = Math.max(1, Math.ceil(filteredAndSorted.length / rowLimit));
 
-  const toggleRow = (key) =>
+  const toggleRow = (key) => {
     setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const sortArrow = (key) =>
+    sortConfig.key === key ? (sortConfig.direction === "asc" ? "↑" : "↓") : "";
 
   return (
     <div className="ledger-page">
@@ -305,7 +295,7 @@ export default function Ledger() {
         ))}
       </div>
 
-      {/* Base currency */}
+      {/* Base currency (below tabs) */}
       <div className="base-currency-selector-container">
         Base currency:{" "}
         <select
@@ -319,56 +309,55 @@ export default function Ledger() {
             </option>
           ))}
         </select>
+
+        <button
+          style={{ marginLeft: 10 }}
+          onClick={() => setShowImport(true)}
+        >
+          Import (IBKR)
+        </button>
       </div>
 
       {/* Add Entry */}
       <div className="ledger-entry-box">
         <h4>Add New {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}</h4>
         <div className="ledger-entry-fields">
-          {activeTab !== "cash" && (
-            <input
-              placeholder="Ticker"
-              value={newEntry.ticker}
-              onChange={(e) =>
-                setNewEntry({
-                  ...newEntry,
-                  ticker: e.target.value.toUpperCase(),
-                  type: activeTab,
-                })
-              }
-            />
-          )}
-
-          <input
-            type="date"
-            value={newEntry.date}
-            onChange={(e) => setNewEntry({ ...newEntry, date: e.target.value })}
-          />
-
           {activeTab !== "cash" ? (
             <>
+              <input
+                placeholder="Ticker"
+                value={newEntry.ticker}
+                onChange={(e) =>
+                  setNewEntry((p) => ({ ...p, ticker: e.target.value.toUpperCase() }))
+                }
+              />
+              <input
+                type="date"
+                value={newEntry.date}
+                onChange={(e) => setNewEntry((p) => ({ ...p, date: e.target.value }))}
+              />
               <input
                 type="number"
                 placeholder="Qty"
                 value={newEntry.quantity}
-                onChange={(e) => setNewEntry({ ...newEntry, quantity: e.target.value })}
+                onChange={(e) => setNewEntry((p) => ({ ...p, quantity: e.target.value }))}
               />
               <input
                 type="number"
                 placeholder="Price"
                 value={newEntry.price}
-                onChange={(e) => setNewEntry({ ...newEntry, price: e.target.value })}
+                onChange={(e) => setNewEntry((p) => ({ ...p, price: e.target.value }))}
               />
               <input
                 type="number"
                 placeholder="Fee"
                 value={newEntry.fee}
-                onChange={(e) => setNewEntry({ ...newEntry, fee: e.target.value })}
+                onChange={(e) => setNewEntry((p) => ({ ...p, fee: e.target.value }))}
               />
 
               <select
                 value={newEntry.currency}
-                onChange={(e) => setNewEntry({ ...newEntry, currency: e.target.value })}
+                onChange={(e) => setNewEntry((p) => ({ ...p, currency: e.target.value }))}
               >
                 <option>USD</option>
                 <option>AUD</option>
@@ -377,7 +366,7 @@ export default function Ledger() {
 
               <select
                 value={newEntry.broker}
-                onChange={(e) => setNewEntry({ ...newEntry, broker: e.target.value })}
+                onChange={(e) => setNewEntry((p) => ({ ...p, broker: e.target.value }))}
               >
                 <option>IBKR</option>
                 <option>CMC</option>
@@ -387,23 +376,26 @@ export default function Ledger() {
           ) : (
             <>
               <input
+                type="date"
+                value={newEntry.date}
+                onChange={(e) => setNewEntry((p) => ({ ...p, date: e.target.value }))}
+              />
+              <input
                 type="number"
                 placeholder="Amount"
                 value={newEntry.amount}
-                onChange={(e) => setNewEntry({ ...newEntry, amount: e.target.value })}
+                onChange={(e) => setNewEntry((p) => ({ ...p, amount: e.target.value }))}
               />
-
               <select
                 value={newEntry.entryType}
-                onChange={(e) => setNewEntry({ ...newEntry, entryType: e.target.value })}
+                onChange={(e) => setNewEntry((p) => ({ ...p, entryType: e.target.value }))}
               >
                 <option value="deposit">Deposit</option>
                 <option value="withdrawal">Withdrawal</option>
               </select>
-
               <select
                 value={newEntry.currency}
-                onChange={(e) => setNewEntry({ ...newEntry, currency: e.target.value })}
+                onChange={(e) => setNewEntry((p) => ({ ...p, currency: e.target.value }))}
               >
                 <option>USD</option>
                 <option>AUD</option>
@@ -416,106 +408,120 @@ export default function Ledger() {
         </div>
       </div>
 
-      {/* Ledger Table */}
+      {/* Table */}
       <table className="ledger-table">
         <thead>
           <tr>
             {activeTab !== "cash" && (
               <th onClick={() => handleSort("ticker")}>
-                Ticker{" "}
-                {sortConfig.key === "ticker" ? (sortConfig.direction === "asc" ? "↑" : "↓") : ""}
+                Ticker {sortArrow("ticker")}
               </th>
             )}
-
-            <th onClick={() => handleSort("date")}>
-              Date{" "}
-              {sortConfig.key === "date" ? (sortConfig.direction === "asc" ? "↑" : "↓") : ""}
-            </th>
-
+            <th onClick={() => handleSort("date")}>Date {sortArrow("date")}</th>
             {activeTab !== "cash" && (
               <th onClick={() => handleSort("quantity")}>
-                Qty{" "}
-                {sortConfig.key === "quantity"
-                  ? sortConfig.direction === "asc"
-                    ? "↑"
-                    : "↓"
-                  : ""}
+                Qty {sortArrow("quantity")}
               </th>
             )}
-
             {activeTab !== "cash" && (
               <th onClick={() => handleSort("price")}>
-                Price{" "}
-                {sortConfig.key === "price" ? (sortConfig.direction === "asc" ? "↑" : "↓") : ""}
+                Price {sortArrow("price")}
               </th>
             )}
-
-            <th onClick={() => handleSort("proceeds")}>
+            <th onClick={() => handleSort(activeTab === "cash" ? "amount" : "proceeds")}>
               {activeTab === "cash" ? "Amount" : "Proceeds"}{" "}
-              {sortConfig.key === "proceeds"
-                ? sortConfig.direction === "asc"
-                  ? "↑"
-                  : "↓"
-                : ""}
+              {sortArrow(activeTab === "cash" ? "amount" : "proceeds")}
             </th>
-
             {activeTab !== "cash" && (
-              <th onClick={() => handleSort("fee")}>
-                Fee{" "}
-                {sortConfig.key === "fee" ? (sortConfig.direction === "asc" ? "↑" : "↓") : ""}
-              </th>
+              <th onClick={() => handleSort("fee")}>Fee {sortArrow("fee")}</th>
             )}
-
             {activeTab !== "cash" && (
               <th onClick={() => handleSort("realisedPL")}>
-                Realised P/L{" "}
-                {sortConfig.key === "realisedPL"
-                  ? sortConfig.direction === "asc"
-                    ? "↑"
-                    : "↓"
-                  : ""}
+                Realised P/L {sortArrow("realisedPL")}
               </th>
             )}
-
             {activeTab !== "cash" && (
               <th onClick={() => handleSort("broker")}>
-                Broker{" "}
-                {sortConfig.key === "broker"
-                  ? sortConfig.direction === "asc"
-                    ? "↑"
-                    : "↓"
-                  : ""}
+                Broker {sortArrow("broker")}
               </th>
             )}
-
-            <th onClick={() => handleSort("currency")}>
-              Currency{" "}
-              {sortConfig.key === "currency"
-                ? sortConfig.direction === "asc"
-                  ? "↑"
-                  : "↓"
-                : ""}
-            </th>
-
+            <th>Currency</th>
             <th></th>
+          </tr>
+
+          {/* Filter row */}
+          <tr className="ledger-filter-row">
+            {activeTab !== "cash" && (
+              <td>
+                <input
+                  placeholder="Filter Ticker"
+                  value={filters.ticker}
+                  onChange={(e) => setFilters((p) => ({ ...p, ticker: e.target.value }))}
+                />
+              </td>
+            )}
+            <td>
+              <input
+                type="date"
+                value={filters.date}
+                onChange={(e) => setFilters((p) => ({ ...p, date: e.target.value }))}
+              />
+            </td>
+            {activeTab !== "cash" && (
+              <td>
+                <input
+                  type="number"
+                  placeholder="Qty"
+                  value={filters.qty}
+                  onChange={(e) => setFilters((p) => ({ ...p, qty: e.target.value }))}
+                />
+              </td>
+            )}
+            {activeTab !== "cash" && <td></td>}
+            <td></td>
+            {activeTab !== "cash" && <td></td>}
+            {activeTab !== "cash" && <td></td>}
+            {activeTab !== "cash" && (
+              <td>
+                <select
+                  value={filters.broker}
+                  onChange={(e) => setFilters((p) => ({ ...p, broker: e.target.value }))}
+                >
+                  <option value="">All</option>
+                  <option>IBKR</option>
+                  <option>CMC</option>
+                  <option>Stake</option>
+                </select>
+              </td>
+            )}
+            <td>
+              <select
+                value={filters.currency}
+                onChange={(e) => setFilters((p) => ({ ...p, currency: e.target.value }))}
+              >
+                <option value="">All</option>
+                <option>USD</option>
+                <option>AUD</option>
+                <option>EUR</option>
+              </select>
+            </td>
+            <td></td>
           </tr>
         </thead>
 
         <tbody>
-          {Object.entries(groupedByCurrency).map(([key, rows]) => {
+          {Object.entries(grouped).map(([key, rows]) => {
             const currency = rows[0]?.currency || "";
-
             const subtotal = rows.reduce(
-              (a, t) => {
+              (a, r) => {
                 if (activeTab === "cash") {
-                  return { qty: 0, proceeds: a.proceeds + (t.amount || 0), fee: 0, realisedPL: 0 };
+                  return { qty: 0, proceeds: a.proceeds + (r.amount || 0), fee: 0, realisedPL: 0 };
                 }
-
                 return {
-                  qty: a.qty + (t.quantity || 0),
-                  proceeds: a.proceeds + (t.proceeds || 0),
-                  fee: a.fee + (t.fee || 0),
-                  realisedPL: a.realisedPL + (t.realisedPL || 0),
+                  qty: a.qty + (r.quantity || 0),
+                  proceeds: a.proceeds + (r.proceeds || 0),
+                  fee: a.fee + (r.fee || 0),
+                  realisedPL: a.realisedPL + (r.realisedPL || 0),
                 };
               },
               { qty: 0, proceeds: 0, fee: 0, realisedPL: 0 }
@@ -526,26 +532,16 @@ export default function Ledger() {
                 <tr className="ledger-subtotal" onClick={() => toggleRow(key)}>
                   {activeTab !== "cash" && (
                     <td>
-                      <strong>{rows[0]?.ticker}</strong>
+                      <strong>{rows[0].ticker}</strong>
                     </td>
                   )}
-
                   <td colSpan={activeTab !== "cash" ? 1 : 0}></td>
-
-                  {activeTab !== "cash" && (
-                    <td>
-                      <strong>{subtotal.qty}</strong>
-                    </td>
-                  )}
-
+                  {activeTab !== "cash" && <td><strong>{subtotal.qty}</strong></td>}
                   {activeTab !== "cash" && <td></td>}
-
                   <td>{subtotal.proceeds.toFixed(2)}</td>
-
                   {activeTab !== "cash" && <td>{subtotal.fee.toFixed(2)}</td>}
                   {activeTab !== "cash" && <td>{subtotal.realisedPL.toFixed(2)}</td>}
                   {activeTab !== "cash" && <td></td>}
-
                   <td>{currency}</td>
                   <td>{collapsed[key] ? "▼" : "▲"}</td>
                 </tr>
@@ -553,27 +549,29 @@ export default function Ledger() {
                 {!collapsed[key] &&
                   rows
                     .slice((currentPage - 1) * rowLimit, currentPage * rowLimit)
-                    .map((t) => (
-                      <tr key={t._id}>
-                        {activeTab !== "cash" && <td>{t.ticker}</td>}
-                        <td>{t.date}</td>
-                        {activeTab !== "cash" && <td>{t.quantity}</td>}
-                        {activeTab !== "cash" && <td>{t.price}</td>}
+                    .map((r) => (
+                      <tr key={r._id}>
+                        {activeTab !== "cash" && <td>{r.ticker}</td>}
+                        <td>{r.date}</td>
+                        {activeTab !== "cash" && <td>{r.quantity}</td>}
+                        {activeTab !== "cash" && <td>{r.price}</td>}
                         <td>
                           {activeTab === "cash"
-                            ? Number(t.amount || 0).toFixed(2)
-                            : Number(t.proceeds || 0).toFixed(2)}
+                            ? Number(r.amount || 0).toFixed(2)
+                            : Number(r.proceeds || 0).toFixed(2)}
                         </td>
-                        {activeTab !== "cash" && <td>{Number(t.fee || 0).toFixed(2)}</td>}
-                        {activeTab !== "cash" && <td>{Number(t.realisedPL || 0).toFixed(2)}</td>}
+                        {activeTab !== "cash" && <td>{Number(r.fee || 0).toFixed(2)}</td>}
+                        {activeTab !== "cash" && <td>{Number(r.realisedPL || 0).toFixed(2)}</td>}
                         {activeTab !== "cash" && (
                           <td>
-                            <span className={`broker-tag ${t.broker?.toLowerCase()}`}>{t.broker}</span>
+                            <span className={`broker-tag ${String(r.broker || "").toLowerCase()}`}>
+                              {r.broker}
+                            </span>
                           </td>
                         )}
-                        <td>{t.currency}</td>
+                        <td>{r.currency}</td>
                         <td>
-                          <button className="icon-btn" onClick={() => deleteEntry(t._id)}>
+                          <button className="icon-btn" onClick={() => deleteEntry(r._id)}>
                             ✕
                           </button>
                         </td>
@@ -635,6 +633,17 @@ export default function Ledger() {
           </button>
         </div>
       </div>
+
+      {/* Import modal */}
+      {showImport && (
+        <ImportModal
+          onClose={() => setShowImport(false)}
+          onImported={async () => {
+            await fetchData();
+            setShowImport(false);
+          }}
+        />
+      )}
     </div>
   );
 }
