@@ -38,11 +38,21 @@ export default function Ledger() {
     try {
       const res = await fetch("/api/trades");
       const data = await res.json();
-      setTrades(data);
+
+      const normalised = data.map(t => ({
+        ...t,
+        quantity: Number(t.quantity) || 0,
+        price: Number(t.price) || 0,
+        fee: Number(t.fee) || 0,
+        realisedPL: Number(t.realisedPL) || 0,
+      })).map(calcTrade);
+
+      setTrades(normalised);
     } catch (err) {
       console.error("Failed to fetch trades", err);
     }
   };
+
 
   const calcTrade = (t) => {
     const proceeds = (t.quantity || 0) * (t.price || 0);
@@ -64,13 +74,27 @@ export default function Ledger() {
 
   const addTrade = async () => {
     try {
+      const payload = {
+        ...newTrade,
+        quantity: Number(newTrade.quantity),
+        price: Number(newTrade.price),
+        fee: Number(newTrade.fee),
+      };
+
       const res = await fetch("/api/trades", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newTrade),
+        body: JSON.stringify(payload),
       });
-      const savedTrade = await res.json();
-      setTrades([savedTrade, ...trades]);
+
+      const saved = calcTrade({
+        ...payload,
+        _id: (await res.json())._id,
+      });
+
+      setTrades(prev => [saved, ...prev]);
+      setCurrentPage(1);
+
       setNewTrade({
         ticker: "",
         date: "",
@@ -80,11 +104,11 @@ export default function Ledger() {
         broker: "IBKR",
         currency: "USD",
       });
-      setCurrentPage(1);
     } catch (err) {
       console.error("Failed to add trade", err);
     }
   };
+
 
   const handleSort = (key) => {
     let direction = "asc";
@@ -251,22 +275,25 @@ export default function Ledger() {
                       <td></td>
                       <td><strong>{subtotal.qty}</strong></td>
                       <td></td>
-                      <td>{subtotal.proceeds?.toFixed(2) || "0.00"}</td>
-                      <td>{subtotal.fee?.toFixed(2) || "0.00"}</td>
-                      <td>{subtotal.realisedPL?.toFixed(2) || "0.00"}</td>
+                      <td>{subtotal.proceeds?.toFixed(2)}</td>
+                      <td>{subtotal.fee?.toFixed(2)}</td>
+                      <td>{subtotal.realisedPL?.toFixed(2)}</td>
                       <td colSpan="2">{collapsed[ticker] ? "▼" : "▲"}</td>
                     </tr>
 
-                    {!collapsed[ticker] && paginatedTrades
-                      .filter(t => t.ticker === ticker)
+                    {!collapsed[ticker] && rows
+                      .slice(
+                        (currentPage - 1) * rowLimit,
+                        currentPage * rowLimit
+                      )
                       .map(t => (
                         <tr key={t._id}>
                           <td>{t.ticker}</td>
                           <td>{t.date}</td>
                           <td>{t.quantity || 0}</td>
                           <td>{t.price || 0}</td>
-                          <td>{t.proceeds?.toFixed(2) || "0.00"}</td>
-                          <td>{t.fee?.toFixed(2) || "0.00"}</td>
+                          <td>{t.proceeds?.toFixed(2)}</td>
+                          <td>{t.fee?.toFixed(2)}</td>
                           <td>{(t.realisedPL || 0).toFixed(2)}</td>
                           <td><span className={`broker-tag ${t.broker?.toLowerCase()}`}>{t.broker}</span></td>
                           <td><button className="icon-btn" onClick={() => deleteTrade(t._id)}>✕</button></td>
