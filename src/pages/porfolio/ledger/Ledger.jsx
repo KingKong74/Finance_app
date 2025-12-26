@@ -72,15 +72,6 @@ export default function Ledger() {
     }
   };
 
-    // const testInsert = async () => {
-    // const testTrade = {
-    //   symbol: "AAPL",
-    //   price: 170,
-    //   qty: 10,
-    //   side: "BUY",
-    //   timestamp: new Date(),
-    // };
-
   const addTrade = async () => {
     try {
       const payload = {

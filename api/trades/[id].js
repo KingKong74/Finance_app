@@ -1,27 +1,38 @@
-import connectToDB from "../utils/db";
-import Trade from "../models/Trade";
+import { MongoClient, ObjectId } from "mongodb";
+
+let client;
+let db;
+
+const uri = process.env.MONGO_URI;
+
+async function connectToDB() {
+  if (db) return db;
+
+  if (!client) {
+    client = new MongoClient(uri);
+    await client.connect();
+  }
+
+  db = client.db("FinanceWebApp");
+  return db;
+}
 
 export default async function handler(req, res) {
-  await connectToDB();
+  const db = await connectToDB();
+  const collection = db.collection("trades");
   const { id } = req.query;
 
-  if (req.method === "DELETE") {
-    try {
-      await Trade.findByIdAndDelete(id);
-      return res.status(200).json({ message: "Trade deleted" });
-    } catch (err) {
-      return res.status(400).json({ error: err.message });
+  try {
+    if (req.method === "DELETE") {
+      const result = await collection.deleteOne({ _id: new ObjectId(id) });
+      if (result.deletedCount === 1) res.status(200).json({ success: true });
+      else res.status(404).json({ error: "Trade not found" });
+    } else {
+      res.setHeader("Allow", ["DELETE"]);
+      res.status(405).end(`Method ${req.method} Not Allowed`);
     }
+  } catch (err) {
+    console.error("DB DELETE error:", err);
+    res.status(500).json({ error: "Failed to delete trade" });
   }
-
-  if (req.method === "PUT") {
-    try {
-      const updatedTrade = await Trade.findByIdAndUpdate(id, req.body, { new: true });
-      return res.status(200).json(updatedTrade);
-    } catch (err) {
-      return res.status(400).json({ error: err.message });
-    }
-  }
-
-  return res.status(405).json({ error: "Method not allowed" });
 }
