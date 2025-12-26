@@ -134,14 +134,6 @@
   background: #fff;
 }
 
-/* .ledger-table tbody tr:nth-child(odd) {
-  background: #fff;
-} */
-
-.ledger-table tbody tr:hover {
-  background: #e6f0ff;
-}
-
 /* Filter row */
 .ledger-filter-row input,
 .ledger-filter-row select {
@@ -284,3 +276,11 @@
   bottom: 0;
   z-index: 4;
 } */
+
+.ledger-table tbody tr:nth-child(odd) {
+  background: #fff;
+}
+
+.ledger-table tbody tr:hover {
+  background: #e6f0ff;
+}
