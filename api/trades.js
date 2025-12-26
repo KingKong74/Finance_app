@@ -1,10 +1,10 @@
 // /api/trades.js
 import { MongoClient } from "mongodb";
 
-const uri = process.env.VITE_MONGO_URI;
+const uri = process.env.MONGO_URI;
 
 if (!uri) {
-  throw new Error("Missing VITE_MONGO_URI environment variable");
+  throw new Error("Missing MONGO_URI environment variable");
 }
 
 let cachedClient = null;
