@@ -1,5 +1,5 @@
 // /api/ledger/index.js
-import { connectToDB } from "../utils/db";
+import { connectToDB } from "../utils/db.js";
 
 function normaliseTab(tab) {
   const t = String(tab || "").toLowerCase();
