@@ -2,121 +2,53 @@
   padding: 2rem;
 }
 
-.trade-entry {
-  display: flex;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-}
-
-.trade-entry input {
-  padding: 0.4rem 0.5rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  width: 100px;
-}
-
-.trade-entry button {
-  padding: 0.4rem 0.75rem;
-  background: #0d6efd;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.trade-entry button:hover {
-  background: #084298;
-}
-
-.ledger-table-wrapper {
-  overflow-x: auto;
-}
-
-.ledger-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.ledger-table th,
-.ledger-table td {
-  padding: 0.6rem 0.8rem;
-  text-align: right;
-  font-size: 0.9rem;
-}
-
-.ledger-table th:first-child,
-.ledger-table td:first-child {
-  text-align: left;
-}
-
-.ledger-table th {
-  background: #f5f5f5;
-  font-weight: 600;
-  text-align: center;
-}
-
-.ledger-table tbody tr:nth-child(even) {
-  background: #fafafa;
-}
-
-.ledger-table tbody tr:nth-child(odd) {
-  background: #fff;
-}
-
-.ledger-table tbody tr:hover {
-  background: #e6f0ff;
-}
-
+/* Tabs */
 .ledger-tabs {
   display: flex;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 
 .ledger-tabs button {
-  padding: 0.4rem 0.8rem;
+  padding: 6px 12px;
+  font-size: 0.9rem;
   border: 1px solid #ccc;
-  background: #f4f6f8;
+  border-radius: 4px;
+  background-color: #f1f1f1;
   cursor: pointer;
 }
 
 .ledger-tabs button.active {
-  background: #0d6efd;
-  color: white;
+  background-color: #ddd;
+  font-weight: bold;
+  color: #000;
 }
 
-.broker-tag {
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 0.75rem;
-  font-weight: 600;
+/* Base currency selector */
+.base-currency-selector-container {
+  margin: 10px 0;
+  text-align: right;
+  font-weight: bold;
 }
 
-.broker-tag.ibkr { background: #e7f1ff; color: #0d6efd; }
-.broker-tag.cmc { background: #e8f5e9; color: #2e7d32; }
-.broker-tag.stake { background: #f3e5f5; color: #6a1b9a; }
-
-.icon-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
+.base-currency-selector {
+  display: inline-flex;
+  align-items: center;
   font-size: 0.9rem;
+  margin-left: 5px;
 }
 
-.ledger-currency-row td {
-  font-size: 0.7rem;
-  font-weight: 600;
-  color: #0d6efd;
-  padding: 2px 8px;
-  border-left: 3px solid #0d6efd;
-  background: transparent;
+.base-currency-selector select {
+  margin-left: 5px;
+  padding: 3px 6px;
+  font-size: 0.9rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background-color: #fff;
+  cursor: pointer;
 }
 
-.ledger-grand-total {
-  background: #f4f6fa;
-  border-top: 2px solid #d0d5dd;
-}
-
+/* Trade entry / Add trade box */
 .ledger-entry-box {
   border: 1px solid #ccc;
   background: #f9f9f9;
@@ -142,12 +74,15 @@
   padding: 4px 6px;
   border-radius: 4px;
   border: 1px solid #ccc;
+}
+
+.ledger-entry-fields input {
   width: 100px;
 }
+
 .ledger-entry-fields select {
   width: 70px;
 }
-
 
 .ledger-entry-fields button {
   padding: 6px 12px;
@@ -168,6 +103,97 @@
   align-items: center;
 }
 
+/* Table */
+.ledger-table-wrapper {
+  overflow-x: auto;
+}
+
+.ledger-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.ledger-table th,
+.ledger-table td {
+  padding: 0.6rem 0.8rem;
+  font-size: 0.9rem;
+}
+
+.ledger-table th {
+  background: #f5f5f5;
+  font-weight: 600;
+  text-align: center;
+}
+
+.ledger-table th:first-child,
+.ledger-table td:first-child {
+  text-align: left;
+}
+
+.ledger-table tbody tr:nth-child(even) {
+  background: #fafafa;
+}
+
+.ledger-table tbody tr:nth-child(odd) {
+  background: #fff;
+}
+
+.ledger-table tbody tr:hover {
+  background: #e6f0ff;
+}
+
+/* Filter row */
+.ledger-filter-row input,
+.ledger-filter-row select {
+  width: 90%;
+  padding: 3px 5px;
+  font-size: 0.85rem;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  background-color: #f9f9f9;
+}
+
+.ledger-filter-row td {
+  padding: 2px 5px;
+}
+
+/* Tags */
+.broker-tag {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.broker-tag.ibkr { background: #e7f1ff; color: #0d6efd; }
+.broker-tag.cmc { background: #e8f5e9; color: #2e7d32; }
+.broker-tag.stake { background: #f3e5f5; color: #6a1b9a; }
+
+/* Buttons */
+.icon-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+/* Subtotals / currency row */
+.ledger-currency-row td {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #0d6efd;
+  padding: 2px 8px;
+  border-left: 3px solid #0d6efd;
+  background: transparent;
+}
+
+/* Grand totals */
+.ledger-grand-total {
+  background: #f4f6fa;
+  border-top: 2px solid #d0d5dd;
+}
+
+/* Pagination */
 .ledger-pagination {
   margin-top: 1rem;
   display: flex;
@@ -199,3 +225,16 @@
   font-weight: bold;
 }
 
+/* Responsive */
+@media (max-width: 768px) {
+  .ledger-filter-row input,
+  .ledger-filter-row select {
+    font-size: 0.75rem;
+  }
+  .base-currency-selector {
+    font-size: 0.8rem;
+  }
+  .base-currency-selector select {
+    font-size: 0.8rem;
+  }
+}
