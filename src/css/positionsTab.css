@@ -1,0 +1,142 @@
+.positions-page {
+  padding: 1.5rem 2rem;
+}
+
+.positions-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.positions-title {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.positions-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.currency-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid #d0d5dd;
+  border-radius: 999px;
+  background: #fff;
+  font-size: 0.9rem;
+}
+
+.currency-pill select {
+  border: none;
+  outline: none;
+  background: transparent;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.positions-card,
+.cash-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04);
+}
+
+.positions-table-wrap {
+  overflow-x: auto;
+}
+
+.positions-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 900px;
+}
+
+.positions-table th,
+.positions-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #eef0f3;
+  font-size: 0.92rem;
+  vertical-align: middle;
+}
+
+.positions-table th {
+  text-align: left;
+  background: #f7f7f8;
+  font-weight: 700;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.positions-table th.num,
+.positions-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.positions-table tbody tr:hover {
+  background: #f5f9ff;
+}
+
+.positions-empty {
+  padding: 18px 12px;
+  text-align: centre;
+  color: #667085;
+}
+
+.instrument {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.instrument-ticker {
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.instrument-meta {
+  font-size: 0.78rem;
+  color: #667085;
+}
+
+.pos {
+  color: #137333;
+  font-weight: 700;
+}
+
+.neg {
+  color: #b42318;
+  font-weight: 700;
+}
+
+.positions-note {
+  margin: 10px 4px 0;
+  font-size: 0.85rem;
+  color: #667085;
+}
+
+.cash-title {
+  margin: 0 0 10px;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+@media (max-width: 768px) {
+  .positions-page {
+    padding: 1rem;
+  }
+  .positions-table {
+    min-width: 820px;
+  }
+}
