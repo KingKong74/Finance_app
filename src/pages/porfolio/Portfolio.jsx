@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from "react";
-import "../../css/dashboard.css";
-import Overview from "./dashboard/overview/Overview"; 
+import "../../css/porfolio.css";
+import Overview from "./overview/Overview"; 
+import Ledger from "./ledger/Ledger"; 
 
-export default function Dashboard() {
+
+export default function Portfolio() {
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("Overview"); // default tab
   const dropdownRef = useRef(null);
@@ -68,7 +70,8 @@ export default function Dashboard() {
       {/* ─── Tab Content ─── */}
       <div className="dashboard-page">
         {activeTab === "Overview" && <Overview />}
-        {activeTab !== "Overview" && (
+        {activeTab === "Ledger" && <Ledger />} 
+        {activeTab !== "Overview" && activeTab !== "Ledger" && (
           <p style={{ padding: "2rem" }}>
             {activeTab} tab coming soon
           </p>

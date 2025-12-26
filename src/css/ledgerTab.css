@@ -1,0 +1,201 @@
+.ledger-page {
+  padding: 2rem;
+}
+
+.trade-entry {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.trade-entry input {
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  width: 100px;
+}
+
+.trade-entry button {
+  padding: 0.4rem 0.75rem;
+  background: #0d6efd;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.trade-entry button:hover {
+  background: #084298;
+}
+
+.ledger-table-wrapper {
+  overflow-x: auto;
+}
+
+.ledger-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.ledger-table th,
+.ledger-table td {
+  padding: 0.6rem 0.8rem;
+  text-align: right;
+  font-size: 0.9rem;
+}
+
+.ledger-table th:first-child,
+.ledger-table td:first-child {
+  text-align: left;
+}
+
+.ledger-table th {
+  background: #f5f5f5;
+  font-weight: 600;
+  text-align: center;
+}
+
+.ledger-table tbody tr:nth-child(even) {
+  background: #fafafa;
+}
+
+.ledger-table tbody tr:nth-child(odd) {
+  background: #fff;
+}
+
+.ledger-table tbody tr:hover {
+  background: #e6f0ff;
+}
+
+.ledger-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.ledger-tabs button {
+  padding: 0.4rem 0.8rem;
+  border: 1px solid #ccc;
+  background: #f4f6f8;
+  cursor: pointer;
+}
+
+.ledger-tabs button.active {
+  background: #0d6efd;
+  color: white;
+}
+
+.broker-tag {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.broker-tag.ibkr { background: #e7f1ff; color: #0d6efd; }
+.broker-tag.cmc { background: #e8f5e9; color: #2e7d32; }
+.broker-tag.stake { background: #f3e5f5; color: #6a1b9a; }
+
+.icon-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.ledger-currency-row td {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #0d6efd;
+  padding: 2px 8px;
+  border-left: 3px solid #0d6efd;
+  background: transparent;
+}
+
+.ledger-grand-total {
+  background: #f4f6fa;
+  border-top: 2px solid #d0d5dd;
+}
+
+.ledger-entry-box {
+  border: 1px solid #ccc;
+  background: #f9f9f9;
+  padding: 12px;
+  margin-bottom: 16px;
+  border-radius: 6px;
+}
+
+.ledger-entry-box h4 {
+  margin: 0 0 8px 0;
+  font-size: 16px;
+}
+
+.ledger-entry-fields {
+  display: flex;
+  gap: 25px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.ledger-entry-fields input,
+.ledger-entry-fields select {
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+  width: 100px;
+}
+.ledger-entry-fields select {
+  width: 70px;
+}
+
+
+.ledger-entry-fields button {
+  padding: 6px 12px;
+  border-radius: 4px;
+  border: none;
+  background-color: #007bff;
+  color: white;
+  cursor: pointer;
+}
+
+.ledger-entry-fields button:hover {
+  background-color: #0056b3;
+}
+
+.price-fee-wrapper {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.ledger-pagination {
+  margin-top: 1rem;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.ledger-pagination button {
+  padding: 0.3rem 0.6rem;
+  border: 1px solid #ccc;
+  background: #fff;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.ledger-pagination button:hover:not(:disabled) {
+  background: #f0f0f0;
+}
+
+.ledger-pagination button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ledger-pagination .active-page {
+  background: #0077cc;
+  color: #fff;
+  font-weight: bold;
+}
+

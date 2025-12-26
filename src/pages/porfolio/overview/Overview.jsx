@@ -1,6 +1,6 @@
 import React, { useState } from "react";
-import StatCard from "../../../../components/StatCard";
-import "../../../../css/overviewTab.css";
+import StatCard from "../../../components/StatCard";
+import "../../../css/overviewTab.css";
 import { accounts, overviewTabs } from "./overviewData";
 import OverviewChart from "./overviewChart";
 import PortfolioPie from "./portfolioPie";
