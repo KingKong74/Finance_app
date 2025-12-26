@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import "../../css/porfolio.css";
 import Overview from "./overview/Overview"; 
 import Ledger from "./ledger/Ledger"; 
+import Strategy from "./stratergy/Stratergy";
 
 
 export default function Portfolio() {
@@ -71,7 +72,8 @@ export default function Portfolio() {
       <div className="dashboard-page">
         {activeTab === "Overview" && <Overview />}
         {activeTab === "Ledger" && <Ledger />} 
-        {activeTab !== "Overview" && activeTab !== "Ledger" && (
+        {activeTab === "Strategy" && <Strategy />}
+        {activeTab !== "Overview" && activeTab !== "Ledger" && activeTab !== "Strategy" && (
           <p style={{ padding: "2rem" }}>
             {activeTab} tab coming soon
           </p>
