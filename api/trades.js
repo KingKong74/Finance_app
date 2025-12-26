@@ -1,12 +1,12 @@
 import { MongoClient } from "mongodb";
 
-const client = new MongoClient(process.env.VITE_MONGO_URI);
+const client = new MongoClient(process.env.MONGO_URI);
 
 export default async function handler(req, res) {
   try {
     if (req.method === "POST") {
       await client.connect();
-      const db = client.db("FinanceWebApp"); // use your DB name
+      const db = client.db("FinanceApp"); 
       const collection = db.collection("trades");
       const result = await collection.insertOne(req.body);
       res.status(200).json(result);
