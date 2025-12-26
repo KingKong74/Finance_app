@@ -1,6 +1,6 @@
 import React from "react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
-import { portfolioPieData } from "./overviewData";
+import { portfolioPieData } from "../overviewData";
 
 const COLORS = ["#0d6efd", "#2e7d32", "#c62828", "#ffc107", "#6c757d"];
 

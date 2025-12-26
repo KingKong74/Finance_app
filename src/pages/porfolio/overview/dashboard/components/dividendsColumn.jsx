@@ -1,6 +1,6 @@
 import React from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { dividendsData } from "./overviewData";
+import { dividendsData } from "../overviewData";
 
 export default function DividendsColumn() {
   return (

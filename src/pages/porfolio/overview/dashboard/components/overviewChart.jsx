@@ -10,7 +10,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { perfData } from "./overviewData";
+import { perfData } from "../overviewData";
 
 export default function OverviewChart({
   range,

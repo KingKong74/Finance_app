@@ -1,20 +1,19 @@
 import React from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { cashflowData } from "./overviewData";
+import { portfolioValueData } from "../overviewData";
 
-export default function CashflowStacked() {
+export default function PortfolioValue() {
   return (
     <div className="chart-card">
-      <h4>Cashflow (Year)</h4>
+      <h4>Portfolio Value (Last 5 Days)</h4>
       <div style={{ width: "100%", height: 250 }}>
         <ResponsiveContainer>
-          <BarChart data={cashflowData}>
+          <BarChart data={portfolioValueData}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="year" />
+            <XAxis dataKey="day" />
             <YAxis tickFormatter={(val) => "$" + val.toLocaleString()} />
             <Tooltip formatter={(val) => "$" + val.toLocaleString()} />
-            <Bar dataKey="interest" stackId="a" fill="#0d6efd" />
-            <Bar dataKey="dividends" stackId="a" fill="#2e7d32" />
+            <Bar dataKey="value" fill="#0d6efd" />
           </BarChart>
         </ResponsiveContainer>
       </div>
