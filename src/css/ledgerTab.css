@@ -238,3 +238,50 @@
     font-size: 0.8rem;
   }
 }
+
+/* Make ledger table scrollable */
+.ledger-page {
+  overflow: auto;
+}
+
+/* Sticky header */
+.ledger-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #f8f9fb; /* light neutral background */
+  border-bottom: 2px solid #ddd;
+}
+
+/* Subtotal rows */
+.ledger-subtotal {
+  background-color: #f2f3f5;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ledger-subtotal:hover {
+  background-color: #e9ebef;
+}
+
+/* Grand total row */
+.ledger-grand-total {
+  background-color: #2f3338;
+  color: #ffffff;
+  font-weight: 700;
+  border-top: 3px solid #1f2328;
+}
+
+.ledger-grand-total td {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.ledger-table tbody tr:nth-child(even):not(.ledger-subtotal):not(.ledger-grand-total) {
+  background-color: #fafafa;
+}
+
+.ledger-table td:last-child {
+  color: #666;
+  font-weight: 500;
+}
