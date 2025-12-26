@@ -265,14 +265,14 @@
 } */
 
 .ledger-grand-total {
-  background-color: #32394645; /* dark grey */
+  background-color: #2f3747a0; /* dark grey */
   color: #ffffff;
 
   font-weight: 700;
 }
 
 .ledger-grand-total td {
-  border-top: 2px solid #111827;
+  border-top: 2px solid #11182799;
 }
 
 .ledger-grand-total td {
