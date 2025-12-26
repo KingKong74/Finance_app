@@ -239,49 +239,48 @@
   }
 }
 
-/* Make ledger table scrollable */
-.ledger-page {
-  overflow: auto;
-}
-
-/* Sticky header */
 .ledger-table thead th {
   position: sticky;
   top: 0;
-  z-index: 3;
-  background: #f8f9fb; /* light neutral background */
-  border-bottom: 2px solid #ddd;
+  z-index: 5;
+
+  background: #ffffff; /* important or it becomes transparent */
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.08);
 }
 
-/* Subtotal rows */
+/* .ledger-page {
+  overflow-y: auto;
+  max-height: calc(100vh - 120px);
+} */
+
 .ledger-subtotal {
-  background-color: #f2f3f5;
+  background-color: #afafaf; /* light grey */
   font-weight: 600;
+
   cursor: pointer;
 }
 
 .ledger-subtotal:hover {
-  background-color: #e9ebef;
+  background-color: #e5e7eb; /* slightly darker on hover */
 }
 
-/* Grand total row */
 .ledger-grand-total {
-  background-color: #2f3338;
+  background-color: #374151; /* dark grey */
   color: #ffffff;
+
   font-weight: 700;
-  border-top: 3px solid #1f2328;
 }
 
 .ledger-grand-total td {
-  padding-top: 12px;
-  padding-bottom: 12px;
+  border-top: 2px solid #111827;
 }
 
-.ledger-table tbody tr:nth-child(even):not(.ledger-subtotal):not(.ledger-grand-total) {
-  background-color: #fafafa;
+.ledger-grand-total td {
+  font-size: 0.95rem;
 }
 
-.ledger-table td:last-child {
-  color: #666;
-  font-weight: 500;
+.ledger-grand-total {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
 }
