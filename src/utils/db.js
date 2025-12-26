@@ -1,10 +1,9 @@
 import mongoose from "mongoose";
-
-const MONGO_URI = "mongodb+srv://baileyking37_db_user:9XPcVKwFtNjdzdQj@cluster0.ppcbvfr.mongodb.net/ledgerDB?retryWrites=true&w=majority";
+const uri = import.meta.env.VITE_MONGO_URI; 
 
 export const connectDB = async () => {
   try {
-    await mongoose.connect(MONGO_URI, {
+    await mongoose.connect(uri, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
     });
