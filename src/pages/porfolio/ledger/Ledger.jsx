@@ -60,8 +60,8 @@ export default function Ledger() {
     return { ...t, proceeds, basis };
   };
 
-  const toggleTicker = (ticker) =>
-    setCollapsed((prev) => ({ ...prev, [ticker]: !prev[ticker] }));
+  const toggleTicker = (key) =>
+    setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
 
   const deleteTrade = async (id) => {
     try {
@@ -145,10 +145,12 @@ export default function Ledger() {
 
   // Grouped trades for subtotal
   const groupedTrades = filteredTrades.reduce((acc, t) => {
-    acc[t.ticker] = acc[t.ticker] || [];
-    acc[t.ticker].push(calcTrade(t));
+    const key = `${t.ticker}_${t.currency}`; // group by ticker + currency
+    acc[key] = acc[key] || [];
+    acc[key].push(calcTrade(t));
     return acc;
   }, {});
+
 
   const grandTotal = filteredTrades.reduce(
     (a, t) => ({
@@ -270,18 +272,16 @@ export default function Ledger() {
                 return (
                   <React.Fragment key={ticker}>
                     <tr className="ledger-currency-row"><td colSpan="9">{currency}</td></tr>
-                    <tr className="ledger-subtotal" onClick={() => toggleTicker(ticker)}>
-                      <td><strong>{ticker}</strong></td>
-                      <td></td>
+                    <tr className="ledger-subtotal" onClick={() => toggleTicker(key)}>
+                      <td><strong>{rows[0].ticker}</strong></td>
+                      <td colSpan="2">{rows[0].currency}</td>
                       <td><strong>{subtotal.qty}</strong></td>
-                      <td></td>
                       <td>{subtotal.proceeds?.toFixed(2)}</td>
                       <td>{subtotal.fee?.toFixed(2)}</td>
                       <td>{subtotal.realisedPL?.toFixed(2)}</td>
-                      <td colSpan="2">{collapsed[ticker] ? "▼" : "▲"}</td>
+                      <td colSpan="2">{collapsed[key] ? "▼" : "▲"}</td>
                     </tr>
-
-                    {!collapsed[ticker] && rows
+                    {!collapsed[key] && rows
                       .slice(
                         (currentPage - 1) * rowLimit,
                         currentPage * rowLimit
