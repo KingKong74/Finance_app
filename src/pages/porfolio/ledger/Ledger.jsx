@@ -29,7 +29,16 @@ export default function Ledger() {
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
 
-  // Fetch trades from MongoDB on mount
+  /* ------------------ helpers ------------------ */
+
+  const calcTrade = (t) => {
+    const proceeds = (t.quantity || 0) * (t.price || 0);
+    const basis = proceeds - (t.fee || 0);
+    return { ...t, proceeds, basis };
+  };
+
+  /* ------------------ fetch ------------------ */
+
   useEffect(() => {
     fetchTrades();
   }, []);
@@ -39,13 +48,15 @@ export default function Ledger() {
       const res = await fetch("/api/trades");
       const data = await res.json();
 
-      const normalised = data.map(t => ({
-        ...t,
-        quantity: Number(t.quantity) || 0,
-        price: Number(t.price) || 0,
-        fee: Number(t.fee) || 0,
-        realisedPL: Number(t.realisedPL) || 0,
-      })).map(calcTrade);
+      const normalised = data.map(t =>
+        calcTrade({
+          ...t,
+          quantity: Number(t.quantity) || 0,
+          price: Number(t.price) || 0,
+          fee: Number(t.fee) || 0,
+          realisedPL: Number(t.realisedPL) || 0,
+        })
+      );
 
       setTrades(normalised);
     } catch (err) {
@@ -53,20 +64,15 @@ export default function Ledger() {
     }
   };
 
-
-  const calcTrade = (t) => {
-    const proceeds = (t.quantity || 0) * (t.price || 0);
-    const basis = proceeds - (t.fee || 0);
-    return { ...t, proceeds, basis };
-  };
+  /* ------------------ actions ------------------ */
 
   const toggleTicker = (ticker) =>
-    setCollapsed((prev) => ({ ...prev, [ticker]: !prev[ticker] }));
+    setCollapsed(prev => ({ ...prev, [ticker]: !prev[ticker] }));
 
   const deleteTrade = async (id) => {
     try {
       await fetch(`/api/trades/${id}`, { method: "DELETE" });
-      setTrades(trades.filter((t) => t._id !== id));
+      setTrades(prev => prev.filter(t => t._id !== id));
     } catch (err) {
       console.error("Failed to delete trade", err);
     }
@@ -75,11 +81,24 @@ export default function Ledger() {
   const addTrade = async () => {
     try {
       const payload = {
-        ...newTrade,
+        ticker: newTrade.ticker.trim(),
+        date: newTrade.date,
         quantity: Number(newTrade.quantity),
         price: Number(newTrade.price),
-        fee: Number(newTrade.fee),
+        fee: Number(newTrade.fee || 0),
+        broker: newTrade.broker,
+        currency: newTrade.currency,
       };
+
+      if (
+        !payload.ticker ||
+        !payload.date ||
+        payload.quantity <= 0 ||
+        payload.price <= 0
+      ) {
+        alert("Invalid trade");
+        return;
+      }
 
       const res = await fetch("/api/trades", {
         method: "POST",
@@ -87,12 +106,8 @@ export default function Ledger() {
         body: JSON.stringify(payload),
       });
 
-      const saved = calcTrade({
-        ...payload,
-        _id: (await res.json())._id,
-      });
-
-      setTrades(prev => [saved, ...prev]);
+      const saved = await res.json();
+      setTrades(prev => [calcTrade(saved), ...prev]);
       setCurrentPage(1);
 
       setNewTrade({
@@ -109,81 +124,82 @@ export default function Ledger() {
     }
   };
 
-
   const handleSort = (key) => {
     let direction = "asc";
-    if (sortConfig.key === key && sortConfig.direction === "asc") direction = "desc";
+    if (sortConfig.key === key && sortConfig.direction === "asc") {
+      direction = "desc";
+    }
     setSortConfig({ key, direction });
   };
 
-  // Filtered and sorted trades
-  let filteredTrades = trades.filter((t) => {
-    return (
-      (!filterTicker || t.ticker.includes(filterTicker)) &&
-      (!filterDate || t.date === filterDate) &&
-      (!filterQty || t.quantity === Number(filterQty)) &&
-      (!filterBroker || t.broker === filterBroker)
-    );
-  });
+  /* ------------------ filter + sort ------------------ */
+
+  let filteredTrades = trades.filter(t =>
+    (!filterTicker || t.ticker.includes(filterTicker)) &&
+    (!filterDate || t.date === filterDate) &&
+    (!filterQty || t.quantity === Number(filterQty)) &&
+    (!filterBroker || t.broker === filterBroker)
+  );
 
   if (sortConfig.key) {
     filteredTrades.sort((a, b) => {
-      const valA = a[sortConfig.key] ?? 0;
-      const valB = b[sortConfig.key] ?? 0;
-      if (valA < valB) return sortConfig.direction === "asc" ? -1 : 1;
-      if (valA > valB) return sortConfig.direction === "asc" ? 1 : -1;
+      const A = a[sortConfig.key] ?? 0;
+      const B = b[sortConfig.key] ?? 0;
+      if (A < B) return sortConfig.direction === "asc" ? -1 : 1;
+      if (A > B) return sortConfig.direction === "asc" ? 1 : -1;
       return 0;
     });
   }
 
-  // Pagination
+  /* ------------------ pagination ------------------ */
+
   const totalPages = Math.ceil(filteredTrades.length / rowLimit);
-  const paginatedTrades = filteredTrades.slice(
+
+  const paginated = filteredTrades.slice(
     (currentPage - 1) * rowLimit,
     currentPage * rowLimit
   );
 
-  // Grouped trades for subtotal
-  const groupedTrades = filteredTrades.reduce((acc, t) => {
+  /* ------------------ grouping ------------------ */
+
+  const groupedTrades = paginated.reduce((acc, t) => {
     acc[t.ticker] = acc[t.ticker] || [];
-    acc[t.ticker].push(calcTrade(t));
+    acc[t.ticker].push(t);
     return acc;
   }, {});
 
   const grandTotal = filteredTrades.reduce(
     (a, t) => ({
-      qty: a.qty + (t.quantity || 0),
-      proceeds: a.proceeds + (t.quantity || 0) * (t.price || 0),
-      fee: a.fee + (t.fee || 0),
+      qty: a.qty + t.quantity,
+      proceeds: a.proceeds + t.proceeds,
+      fee: a.fee + t.fee,
       realisedPL: a.realisedPL + (t.realisedPL || 0),
     }),
     { qty: 0, proceeds: 0, fee: 0, realisedPL: 0 }
   );
 
-  const renderPagination = () => {
-    const pages = [];
-    for (let i = 1; i <= totalPages; i++) pages.push(i);
+  const renderPagination = () => (
+    <div className="ledger-pagination">
+      <button disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)}>Prev</button>
+      {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
+        <button
+          key={p}
+          className={p === currentPage ? "active" : ""}
+          onClick={() => setCurrentPage(p)}
+        >
+          {p}
+        </button>
+      ))}
+      <button disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => p + 1)}>Next</button>
+    </div>
+  );
 
-    return (
-      <div className="ledger-pagination">
-        <button disabled={currentPage === 1} onClick={() => setCurrentPage(currentPage - 1)}>Prev</button>
-        {pages.map((p) => (
-          <button
-            key={p}
-            className={p === currentPage ? "active" : ""}
-            onClick={() => setCurrentPage(p)}
-          >
-            {p}
-          </button>
-        ))}
-        <button disabled={currentPage === totalPages} onClick={() => setCurrentPage(currentPage + 1)}>Next</button>
-      </div>
-    );
-  };
+  /* ------------------ UI ------------------ */
 
   return (
     <div className="ledger-page">
       <h2>Ledger</h2>
+
       <div className="ledger-tabs">
         <button className={activeTab === "trades" ? "active" : ""} onClick={() => setActiveTab("trades")}>Trades</button>
         <button className={activeTab === "cash" ? "active" : ""} onClick={() => setActiveTab("cash")}>Cash</button>
@@ -191,29 +207,15 @@ export default function Ledger() {
 
       {activeTab === "trades" && (
         <>
-          {/* Add Trade Box */}
+          {/* Add Trade */}
           <div className="ledger-entry-box">
             <h4>Add New Trade</h4>
             <div className="ledger-entry-fields">
               <input placeholder="Ticker" value={newTrade.ticker} onChange={e => setNewTrade({ ...newTrade, ticker: e.target.value.toUpperCase() })} />
               <input type="date" value={newTrade.date} onChange={e => setNewTrade({ ...newTrade, date: e.target.value })} />
               <input type="number" placeholder="Qty" value={newTrade.quantity} onChange={e => setNewTrade({ ...newTrade, quantity: e.target.value })} />
-              <div className="price-fee-wrapper">
-                <input type="number" placeholder="Price" value={newTrade.price} onChange={e => setNewTrade({ ...newTrade, price: e.target.value })} />
-                <select value={newTrade.currency} onChange={e => setNewTrade({ ...newTrade, currency: e.target.value })}>
-                  <option>USD</option>
-                  <option>AUD</option>
-                  <option>EUR</option>
-                </select>
-              </div>
-              <div className="price-fee-wrapper">
-                <input type="number" placeholder="Fee" value={newTrade.fee} onChange={e => setNewTrade({ ...newTrade, fee: e.target.value })} />
-                <select value={newTrade.currency} onChange={e => setNewTrade({ ...newTrade, currency: e.target.value })}>
-                  <option>USD</option>
-                  <option>AUD</option>
-                  <option>EUR</option>
-                </select>
-              </div>
+              <input type="number" placeholder="Price" value={newTrade.price} onChange={e => setNewTrade({ ...newTrade, price: e.target.value })} />
+              <input type="number" placeholder="Fee" value={newTrade.fee} onChange={e => setNewTrade({ ...newTrade, fee: e.target.value })} />
               <select value={newTrade.broker} onChange={e => setNewTrade({ ...newTrade, broker: e.target.value })}>
                 <option>IBKR</option>
                 <option>CMC</option>
@@ -223,90 +225,56 @@ export default function Ledger() {
             </div>
           </div>
 
-          {/* Trades Table */}
+          {/* Table */}
           <table className="ledger-table">
             <thead>
               <tr>
-                <th onClick={() => handleSort("ticker")}>Ticker {sortConfig.key === "ticker" ? (sortConfig.direction === "asc" ? "↑" : "↓") : ""}</th>
-                <th onClick={() => handleSort("date")}>Date {sortConfig.key === "date" ? (sortConfig.direction === "asc" ? "↑" : "↓") : ""}</th>
-                <th onClick={() => handleSort("quantity")}>Qty {sortConfig.key === "quantity" ? (sortConfig.direction === "asc" ? "↑" : "↓") : ""}</th>
-                <th onClick={() => handleSort("price")}>Price {sortConfig.key === "price" ? (sortConfig.direction === "asc" ? "↑" : "↓") : ""}</th>
-                <th onClick={() => handleSort("proceeds")}>Proceeds {sortConfig.key === "proceeds" ? (sortConfig.direction === "asc" ? "↑" : "↓") : ""}</th>
-                <th onClick={() => handleSort("fee")}>Fee {sortConfig.key === "fee" ? (sortConfig.direction === "asc" ? "↑" : "↓") : ""}</th>
-                <th onClick={() => handleSort("realisedPL")}>Realised P/L {sortConfig.key === "realisedPL" ? (sortConfig.direction === "asc" ? "↑" : "↓") : ""}</th>
-                <th onClick={() => handleSort("broker")}>Broker {sortConfig.key === "broker" ? (sortConfig.direction === "asc" ? "↑" : "↓") : ""}</th>
+                <th onClick={() => handleSort("ticker")}>Ticker</th>
+                <th onClick={() => handleSort("date")}>Date</th>
+                <th onClick={() => handleSort("quantity")}>Qty</th>
+                <th onClick={() => handleSort("price")}>Price</th>
+                <th>Proceeds</th>
+                <th>Fee</th>
+                <th>Realised P/L</th>
+                <th>Broker</th>
                 <th></th>
-              </tr>
-              <tr className="ledger-filters-row">
-                <td><input type="text" placeholder="Ticker" value={filterTicker} onChange={e => setFilterTicker(e.target.value.toUpperCase())} /></td>
-                <td><input type="date" value={filterDate} onChange={e => setFilterDate(e.target.value)} /></td>
-                <td><input type="number" placeholder="Qty" value={filterQty} onChange={e => setFilterQty(e.target.value)} /></td>
-                <td></td><td></td><td></td><td></td>
-                <td>
-                  <select value={filterBroker} onChange={e => setFilterBroker(e.target.value)}>
-                    <option value="">All</option>
-                    <option>IBKR</option>
-                    <option>CMC</option>
-                    <option>Stake</option>
-                  </select>
-                </td>
-                <td></td>
               </tr>
             </thead>
 
             <tbody>
-              {Object.entries(groupedTrades).map(([ticker, rows]) => {
-                const currency = rows[0]?.currency || "";
-                const subtotal = rows.reduce(
-                  (a, t) => ({
-                    qty: a.qty + (t.quantity || 0),
-                    proceeds: a.proceeds + (t.proceeds || 0),
-                    fee: a.fee + (t.fee || 0),
-                    realisedPL: a.realisedPL + (t.realisedPL || 0),
-                  }),
-                  { qty: 0, proceeds: 0, fee: 0, realisedPL: 0 }
-                );
+              {Object.entries(groupedTrades).map(([ticker, rows]) => (
+                <React.Fragment key={ticker}>
+                  <tr className="ledger-subtotal" onClick={() => toggleTicker(ticker)}>
+                    <td><strong>{ticker}</strong></td>
+                    <td></td>
+                    <td><strong>{rows.reduce((a, t) => a + t.quantity, 0)}</strong></td>
+                    <td></td>
+                    <td>{rows.reduce((a, t) => a + t.proceeds, 0).toFixed(2)}</td>
+                    <td>{rows.reduce((a, t) => a + t.fee, 0).toFixed(2)}</td>
+                    <td>{rows.reduce((a, t) => a + (t.realisedPL || 0), 0).toFixed(2)}</td>
+                    <td colSpan="2">{collapsed[ticker] ? "▼" : "▲"}</td>
+                  </tr>
 
-                return (
-                  <React.Fragment key={ticker}>
-                    <tr className="ledger-currency-row"><td colSpan="9">{currency}</td></tr>
-                    <tr className="ledger-subtotal" onClick={() => toggleTicker(ticker)}>
-                      <td><strong>{ticker}</strong></td>
-                      <td></td>
-                      <td><strong>{subtotal.qty}</strong></td>
-                      <td></td>
-                      <td>{subtotal.proceeds?.toFixed(2)}</td>
-                      <td>{subtotal.fee?.toFixed(2)}</td>
-                      <td>{subtotal.realisedPL?.toFixed(2)}</td>
-                      <td colSpan="2">{collapsed[ticker] ? "▼" : "▲"}</td>
+                  {!collapsed[ticker] && rows.map(t => (
+                    <tr key={t._id}>
+                      <td>{t.ticker}</td>
+                      <td>{t.date}</td>
+                      <td>{t.quantity}</td>
+                      <td>{t.price}</td>
+                      <td>{t.proceeds.toFixed(2)}</td>
+                      <td>{t.fee.toFixed(2)}</td>
+                      <td>{(t.realisedPL || 0).toFixed(2)}</td>
+                      <td>{t.broker}</td>
+                      <td><button onClick={() => deleteTrade(t._id)}>✕</button></td>
                     </tr>
-
-                    {!collapsed[ticker] && rows
-                      .slice(
-                        (currentPage - 1) * rowLimit,
-                        currentPage * rowLimit
-                      )
-                      .map(t => (
-                        <tr key={t._id}>
-                          <td>{t.ticker}</td>
-                          <td>{t.date}</td>
-                          <td>{t.quantity || 0}</td>
-                          <td>{t.price || 0}</td>
-                          <td>{t.proceeds?.toFixed(2)}</td>
-                          <td>{t.fee?.toFixed(2)}</td>
-                          <td>{(t.realisedPL || 0).toFixed(2)}</td>
-                          <td><span className={`broker-tag ${t.broker?.toLowerCase()}`}>{t.broker}</span></td>
-                          <td><button className="icon-btn" onClick={() => deleteTrade(t._id)}>✕</button></td>
-                        </tr>
-                      ))}
-                  </React.Fragment>
-                );
-              })}
+                  ))}
+                </React.Fragment>
+              ))}
 
               <tr className="ledger-grand-total">
                 <td><strong>Grand Total</strong></td>
                 <td></td>
-                <td><strong>{grandTotal.qty}</strong></td>
+                <td>{grandTotal.qty}</td>
                 <td></td>
                 <td>{grandTotal.proceeds.toFixed(2)}</td>
                 <td>{grandTotal.fee.toFixed(2)}</td>
@@ -316,12 +284,11 @@ export default function Ledger() {
             </tbody>
           </table>
 
-          {/* Pagination & Rows per page */}
           <div className="ledger-controls-bottom">
             <label>
               Rows per page:
               <select value={rowLimit} onChange={e => { setRowLimit(Number(e.target.value)); setCurrentPage(1); }}>
-                {[25, 50, 100, 500, 1000].map(n => <option key={n} value={n}>{n}</option>)}
+                {[25, 50, 100, 500].map(n => <option key={n}>{n}</option>)}
               </select>
             </label>
             {renderPagination()}
