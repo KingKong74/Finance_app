@@ -36,6 +36,8 @@ export default function Positions() {
   const [cashRows, setCashRows] = useState([]);
   const [displayCurrency, setDisplayCurrency] = useState("AUD");
   const [loading, setLoading] = useState(true);
+  const [plCurrency, setPlCurrency] = useState("ORIGINAL"); 
+
 
   useEffect(() => {
     const run = async () => {
@@ -103,9 +105,13 @@ export default function Positions() {
 
       const mvDisplay =
         marketValue == null ? null : toBase(marketValue, p.currency, displayCurrency);
+
       const cbDisplay = toBase(p.costBasis, p.currency, displayCurrency);
+
+      // ✅ P/L currency logic here
+      const pnlTargetCurrency = plCurrency === "ORIGINAL" ? p.currency : plCurrency;
       const upnlDisplay =
-        unrealised == null ? null : toBase(unrealised, p.currency, displayCurrency);
+        unrealised == null ? null : toBase(unrealised, p.currency, pnlTargetCurrency);
 
       return {
         ...p,
@@ -114,9 +120,11 @@ export default function Positions() {
         mvDisplay,
         cbDisplay,
         upnlDisplay,
+        pnlTargetCurrency, 
       };
     });
-  }, [rows, displayCurrency]);
+  }, [rows, displayCurrency, plCurrency]);
+
 
   return (
     <div className="positions-page">
@@ -127,9 +135,12 @@ export default function Positions() {
           <label className="currency-pill">
             P/L currency:&nbsp;
             <select
-              value={displayCurrency}
-              onChange={(e) => setDisplayCurrency(e.target.value)}
+              value={plCurrency}
+              onChange={(e) => setPlCurrency(e.target.value)}
             >
+              {/* Default option = use trade currency */}
+              <option value="ORIGINAL">Original</option>
+
               {Object.keys(EXCHANGE_RATES).map((c) => (
                 <option key={c} value={c}>
                   {c}
@@ -150,7 +161,9 @@ export default function Positions() {
                 <th className="num">Market Value</th>
                 <th className="num">Avg. Price</th>
                 <th className="num">Cost Basis</th>
-                <th className="num">Unrealised P&amp;L ({displayCurrency})</th>
+                <th className="num">
+                  Unrealised P&amp;L ({plCurrency === "ORIGINAL" ? "Original" : plCurrency})
+                </th>
               </tr>
             </thead>
 
@@ -199,7 +212,7 @@ export default function Positions() {
                       </td>
 
                       <td className={`num ${pnlClass}`}>
-                        {pnl == null ? "—" : fmtMoney(pnl, displayCurrency)}
+                        {p.pnl == null ? "—" : fmtMoney(p.pnl, p.pnlTargetCurrency)}
                       </td>
                     </tr>
                   );
