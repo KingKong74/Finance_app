@@ -1,6 +1,6 @@
 // /api/ledger/[id].js
 import { ObjectId } from "mongodb";
-import { connectToDB } from "../utils/db";
+import { connectToDB } from "../utils/db.js";
 
 function normaliseTab(tab) {
   const t = String(tab || "").toLowerCase();
