@@ -254,18 +254,18 @@
 }
 
 .ledger-subtotal {
-  background-color: #afafaf; /* light grey */
+  background-color: #afafaf4f; /* light grey */
   font-weight: 600;
 
   cursor: pointer;
 }
 
-.ledger-subtotal:hover {
-  background-color: #e5e7eb; /* slightly darker on hover */
-}
+/* .ledger-subtotal:hover {
+  background-color: #e5e7eb; 
+} */
 
 .ledger-grand-total {
-  background-color: #374151; /* dark grey */
+  background-color: #32394645; /* dark grey */
   color: #ffffff;
 
   font-weight: 700;
@@ -279,8 +279,8 @@
   font-size: 0.95rem;
 }
 
-.ledger-grand-total {
+/* .ledger-grand-total {
   position: sticky;
   bottom: 0;
   z-index: 4;
-}
+} */
