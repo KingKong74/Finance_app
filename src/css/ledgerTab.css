@@ -131,12 +131,12 @@
 }
 
 .ledger-table tbody tr:nth-child(even) {
-  background: #fafafa;
-}
-
-.ledger-table tbody tr:nth-child(odd) {
   background: #fff;
 }
+
+/* .ledger-table tbody tr:nth-child(odd) {
+  background: #fff;
+} */
 
 .ledger-table tbody tr:hover {
   background: #e6f0ff;
@@ -248,10 +248,10 @@
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.08);
 }
 
-/* .ledger-page {
+.ledger-page {
   overflow-y: auto;
   max-height: calc(100vh - 120px);
-} */
+}
 
 .ledger-subtotal {
   background-color: #afafaf; /* light grey */
