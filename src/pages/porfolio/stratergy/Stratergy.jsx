@@ -1,54 +1,39 @@
-// src/pages/ledger/Strategy.jsx
 import React from "react";
 
-export default function Strategy() {
+export default function Stratergy() {
   const testInsert = async () => {
-    const dummyTrade = {
-      ticker: "TEST",
-      date: new Date().toISOString().slice(0, 10),
-      quantity: 10,
-      price: 100,
-      fee: 1,
-      broker: "IBKR",
-      currency: "USD",
-      realisedPL: 10 * 100 - 1,
-    };
-
     try {
+      const dummyTrade = {
+        symbol: "BTC",
+        price: 50000,
+        amount: 0.1,
+        fee: 5,
+      };
+
       const res = await fetch("/api/trades", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(dummyTrade),
       });
 
-      // Safe JSON parsing
-      let data;
-      try {
-        data = await res.json();
-      } catch (err) {
+      // Check for non-2xx responses
+      if (!res.ok) {
         const text = await res.text();
-        console.error("Response is not JSON:", text);
-        alert(`API returned non-JSON. Check console.`);
+        console.error("API responded with an error:", text);
         return;
       }
 
-      if (res.ok) {
-        console.log("Trade inserted:", data);
-        alert("Trade inserted successfully! Check console.");
-      } else {
-        console.error("Failed to insert trade:", data);
-        alert("Failed to insert trade. Check console for details.");
-      }
+      const data = await res.json();
+      console.log("Inserted trade:", data);
+      alert("Trade inserted! Check console for details.");
     } catch (err) {
       console.error("Error calling API:", err);
-      alert("Error calling API. Check console.");
     }
   };
 
   return (
-    <div style={{ padding: "2rem" }}>
-      <h2>Database Test</h2>
-      <p>Click the button to try inserting a dummy trade.</p>
+    <div style={{ padding: 20 }}>
+      <h1>Trade Insert Test</h1>
       <button onClick={testInsert}>Insert Dummy Trade</button>
     </div>
   );

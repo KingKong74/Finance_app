@@ -1,5 +1,5 @@
-import connectToDB from "../../../utils/db";
-import Trade from "../../../models/Trade";
+import connectToDB from "../utils/db";
+import Trade from "../models/Trade";
 
 export default async function handler(req, res) {
   await connectToDB();
