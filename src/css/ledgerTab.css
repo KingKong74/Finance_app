@@ -261,10 +261,11 @@
 
 .ledger-table thead th {
   position: sticky;
-  top: 0;
+  top: -32px;
   z-index: 5;
 
-  background: #ffffff; /* important or it becomes transparent */
+  background: #e3e3e3; /* important or it becomes transparent */
+  border: #ccc;
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.08);
 }
 
