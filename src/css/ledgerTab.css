@@ -130,9 +130,37 @@
   text-align: left;
 }
 
-.ledger-table tbody tr:nth-child(even) {
+/* Normal rows only (don’t affect subtotal / grand total) */
+.ledger-table tbody tr:not(.ledger-subtotal):not(.ledger-grand-total):nth-child(even) {
   background: #fff;
 }
+
+.ledger-table tbody tr:not(.ledger-subtotal):not(.ledger-grand-total):nth-child(odd) {
+  background: #fff;
+}
+
+.ledger-table tbody tr:not(.ledger-subtotal):not(.ledger-grand-total):hover {
+  background: #e6f0ff;
+}
+
+/* Subtotals */
+.ledger-table tbody tr.ledger-subtotal {
+  background-color: #afafaf4f !important;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ledger-table tbody tr.ledger-subtotal:hover {
+  background-color: #e5e7eb !important;
+}
+
+/* Grand total */
+.ledger-table tbody tr.ledger-grand-total {
+  background-color: #2f3747a0 !important;
+  color: #fff;
+  font-weight: 700;
+}
+
 
 /* Filter row */
 .ledger-filter-row input,
@@ -245,23 +273,23 @@
   max-height: calc(100vh - 120px);
 }
 
-.ledger-subtotal {
-  background-color: #afafaf4f; /* light grey */
+/* .ledger-subtotal {
+  background-color: #afafaf4f; 
   font-weight: 600;
 
   cursor: pointer;
-}
+} */
 
 /* .ledger-subtotal:hover {
   background-color: #e5e7eb; 
 } */
-
+/* 
 .ledger-grand-total {
-  background-color: #2f3747a0; /* dark grey */
+  background-color: #2f3747a0; 
   color: #ffffff;
 
   font-weight: 700;
-}
+} */
 
 .ledger-grand-total td {
   border-top: 2px solid #11182799;
@@ -276,11 +304,3 @@
   bottom: 0;
   z-index: 4;
 } */
-
-.ledger-table tbody tr:nth-child(odd) {
-  background: #fff;
-}
-
-.ledger-table tbody tr:hover {
-  background: #e6f0ff;
-}
