@@ -148,8 +148,25 @@
   font-size: 0.72rem;
   font-weight: 700;
   margin-left: 4px;
+  line-height: 1.2;
 }
 
-.price-badge.live { background: #e8f5e9; color: #2e7d32; }
-.price-badge.cached { background: #fff3e0; color: #ef6c00; }
-.price-badge.last { background: #e3f2fd; color: #1565c0; }
+.price-badge.live {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.price-badge.cached {
+  background: #fff3e0;
+  color: #ef6c00;
+}
+
+.price-badge.last {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+/* Extra emphasis when stale */
+.price-badge:contains("STALE") {
+  opacity: 0.8;
+}
