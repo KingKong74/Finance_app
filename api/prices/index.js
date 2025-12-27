@@ -1,6 +1,6 @@
 // /api/prices/index.js
 import { connectToDB } from "../utils/db.js";
-import { fetchLivePrices } from "../utils/twelveData.js";
+import { fetchLivePrices} from "../utils/twelveData.js";
 
 const CACHE_COLLECTION = "prices";
 const DEFAULT_TTL_MINUTES = 60;

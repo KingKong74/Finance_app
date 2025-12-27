@@ -1,84 +1,10 @@
 // /api/prices/refresh.js
 import { connectToDB } from "../utils/db.js";
+import { fetchLivePricesChunked} from "../utils/twelveData.js";
+
 
 const TRADES_COLLECTION = "trades";
 const PRICES_COLLECTION = "prices";
-
-//Twelve Data live fetch (batch)
-async function fetchLivePrices(symbols) {
-  const apiKey = process.env.TWELVE_DATA_API_KEY;
-  if (!apiKey) throw new Error("Missing TWELVE_DATA_API_KEY");
-
-  const qs = new URLSearchParams({
-    symbol: symbols.join(","),
-    apikey: apiKey,
-  });
-
-async function fetchLivePricesChunked(symbols, chunkSize = 8) {
-  const allResults = {};
-
-  for (let i = 0; i < symbols.length; i += chunkSize) {
-    const chunk = symbols.slice(i, i + chunkSize);
-
-    const partial = await fetchLivePrices(chunk);
-    Object.assign(allResults, partial);
-
-    // If more chunks remain, wait 60s to avoid rate limit
-    if (i + chunkSize < symbols.length) {
-      await new Promise((r) => setTimeout(r, 60_000));
-    }
-  }
-
-  return allResults;
-}
-
-  const url = `https://api.twelvedata.com/quote?${qs.toString()}`;
-
-  const r = await fetch(url, { headers: { accept: "application/json" } });
-  const data = await r.json().catch(() => null);
-
-  if (!r.ok || !data) throw new Error(`Twelve Data HTTP error: ${r.status}`);
-  if (data.status === "error") throw new Error(data.message || "Twelve Data error");
-
-  const out = {};
-
-  const normaliseOne = (obj) => {
-    if (!obj || obj.status === "error") return null;
-
-    const rawPrice = obj.price ?? obj.close ?? obj.last ?? null;
-    const priceNum = rawPrice == null ? null : Number(rawPrice);
-    if (priceNum == null || Number.isNaN(priceNum)) return null;
-
-    return {
-      price: priceNum,
-      currency: obj.currency || "USD",
-      asOf: obj.datetime || new Date().toISOString(),
-      source: "twelvedata-live",
-    };
-  };
-
-  // Batch responses are usually keyed by symbol
-  const looksBatch =
-    typeof data === "object" &&
-    !Array.isArray(data) &&
-    !("symbol" in data) &&
-    symbols.some((s) => Object.prototype.hasOwnProperty.call(data, s));
-
-  if (looksBatch) {
-    for (const sym of symbols) {
-      const item = normaliseOne(data[sym]);
-      if (item) out[sym] = item;
-    }
-    return out;
-  }
-
-  // Single response fallback
-  const sym = String(data.symbol || symbols[0] || "").toUpperCase();
-  const item = normaliseOne(data);
-  if (sym && item) out[sym] = item;
-
-  return out;
-}
 
 
 export default async function handler(req, res) {
