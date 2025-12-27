@@ -4,7 +4,7 @@ import { connectToDB } from "../utils/db.js";
 const TRADES_COLLECTION = "trades";
 const PRICES_COLLECTION = "prices";
 
-// Twelve Data live fetch (batch)
+//Twelve Data live fetch (batch)
 async function fetchLivePrices(symbols) {
   const apiKey = process.env.TWELVE_DATA_API_KEY;
   if (!apiKey) throw new Error("Missing TWELVE_DATA_API_KEY");
@@ -13,6 +13,24 @@ async function fetchLivePrices(symbols) {
     symbol: symbols.join(","),
     apikey: apiKey,
   });
+
+async function fetchLivePricesChunked(symbols, chunkSize = 8) {
+  const allResults = {};
+
+  for (let i = 0; i < symbols.length; i += chunkSize) {
+    const chunk = symbols.slice(i, i + chunkSize);
+
+    const partial = await fetchLivePrices(chunk);
+    Object.assign(allResults, partial);
+
+    // If more chunks remain, wait 60s to avoid rate limit
+    if (i + chunkSize < symbols.length) {
+      await new Promise((r) => setTimeout(r, 60_000));
+    }
+  }
+
+  return allResults;
+}
 
   const url = `https://api.twelvedata.com/quote?${qs.toString()}`;
 
@@ -109,7 +127,7 @@ export default async function handler(req, res) {
     }
 
     // 2) Fetch live prices in one go (provider permitting)
-    const live = await fetchLivePrices(symbols);
+    const live = await fetchLivePricesChunked(symbols);
 
     // 3) Upsert cache
     const now = new Date();
