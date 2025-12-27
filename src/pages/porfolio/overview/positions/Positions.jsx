@@ -96,7 +96,7 @@ export default function Positions() {
           a.date < b.date ? -1 : a.date > b.date ? 1 : 0
         );
 
-        const positions = buildPositions(normalised);
+        const positions = buildPositionsFIFO(normalised);
 
         // Cash holdings: sum deposits/withdrawals by currency
         const cashNormalised = (Array.isArray(cash) ? cash : []).map((c) => ({
@@ -344,95 +344,129 @@ export default function Positions() {
  * - Cost basis is tracked as total cost of the open position.
  * - Market price falls back to last trade price (easy upgrade later).
  */
-function buildPositions(trades) {
+function buildPositionsFIFO(trades) {
   // key: ticker|currency|type
   const map = new Map();
 
-  for (const t of trades) {
-    const key = `${t.ticker}|${t.currency}|${t.type}`;
+  const getKey = (t) => `${t.ticker}|${t.currency}|${t.type}`;
+
+  // Sort oldest -> newest (FIFO needs this)
+  const sorted = [...trades].sort((a, b) => {
+    const at = a.ts || a.date || "";
+    const bt = b.ts || b.date || "";
+    return at < bt ? -1 : at > bt ? 1 : 0;
+  });
+
+  for (const t of sorted) {
+    const key = getKey(t);
+
     if (!map.has(key)) {
       map.set(key, {
         ticker: t.ticker,
         currency: t.currency,
         type: t.type,
-        lots: [], // FIFO lots for LONG side only (each lot: { qty, unitCost })
-        quantity: 0,
-        costBasis: 0,
-        avgPrice: null,
+        lotsLong: [],  // [{qty, px}]
+        lotsShort: [], // [{qty, px}] qty is positive “shares short”
         marketPrice: null,
-        lastDate: "",
+        lastTs: "",
       });
     }
 
     const p = map.get(key);
 
-    // last trade price as placeholder market price
-    if (useLastTradeAsMarketPrice) {
+    // last trade price as placeholder “market”
+    if (useLastTradeAsMarketPrice && Number.isFinite(t.price)) {
       p.marketPrice = t.price;
-      p.lastDate = t.date;
+      p.lastTs = t.ts || t.date || "";
     }
 
-    const q = Number(t.quantity || 0);
+    let q = Number(t.quantity || 0);
     const px = Number(t.price || 0);
     const fee = Number(t.fee || 0);
 
-    if (!q || !px) continue;
+    if (!q || !Number.isFinite(px)) continue;
 
-    // BUY (adds a lot)
+    // Helper: allocate fee per share for the trade being applied (simple + fair enough)
+    // This keeps FIFO stable and avoids fees “exploding” the avg cost.
+    const feePerShare = Math.abs(q) > 0 ? fee / Math.abs(q) : 0;
+
+    // BUY (q > 0)
     if (q > 0) {
-      const unitFee = q !== 0 ? fee / q : 0;
-      const unitCost = px + unitFee; // allocate buy fee into unit cost
+      // If currently short, buys should cover shorts FIFO first
+      while (q > 0 && p.lotsShort.length > 0) {
+        const lot = p.lotsShort[0];
+        const cover = Math.min(q, lot.qty);
 
-      p.lots.push({ qty: q, unitCost });
+        lot.qty -= cover;
+        q -= cover;
+
+        if (lot.qty <= 1e-12) p.lotsShort.shift();
+      }
+
+      // Any remaining buy becomes a new long lot
+      if (q > 0) {
+        p.lotsLong.push({ qty: q, px: px + feePerShare }); // bake fee into lot cost
+      }
+
       continue;
     }
 
-    // SELL (consume lots FIFO)
+    // SELL (q < 0)
     if (q < 0) {
-      let remainingToSell = Math.abs(q);
+      let sellQty = Math.abs(q);
 
-      // NOTE: we are not doing short lots here yet.
-      // If you sell more than you hold, we’ll stop at zero (or you can extend to short support).
-      while (remainingToSell > 1e-12 && p.lots.length > 0) {
-        const lot = p.lots[0];
+      // If currently long, sells consume long lots FIFO first
+      while (sellQty > 0 && p.lotsLong.length > 0) {
+        const lot = p.lotsLong[0];
+        const take = Math.min(sellQty, lot.qty);
 
-        const take = Math.min(lot.qty, remainingToSell);
         lot.qty -= take;
-        remainingToSell -= take;
+        sellQty -= take;
 
-        if (lot.qty <= 1e-12) p.lots.shift();
+        if (lot.qty <= 1e-12) p.lotsLong.shift();
       }
 
-      // If remainingToSell > 0 here, you went net short.
-      // We can add short support later (it’s a separate FIFO queue).
+      // Any remaining sell becomes / adds to a short lot
+      if (sellQty > 0) {
+        p.lotsShort.push({ qty: sellQty, px: px - feePerShare }); 
+        // note: fee on sell reduces proceeds; for “cost view” this convention is OK.
+      }
+
       continue;
     }
   }
 
-  // Build summary fields from remaining lots
+  // Convert lots into position rows
   const out = [];
 
   for (const p of map.values()) {
-    const qty = p.lots.reduce((a, l) => a + l.qty, 0);
-    if (Math.abs(qty) <= 1e-12) continue;
+    const longQty = p.lotsLong.reduce((a, l) => a + l.qty, 0);
+    const shortQty = p.lotsShort.reduce((a, l) => a + l.qty, 0);
+    const netQty = longQty - shortQty;
 
-    const costBasis = p.lots.reduce((a, l) => a + l.qty * l.unitCost, 0);
-    const avgPrice = qty !== 0 ? costBasis / qty : null;
+    if (Math.abs(netQty) <= 1e-12) continue;
+
+    // Cost basis: long lots add cost, short lots subtract cost (so avgPrice still works)
+    const longCost = p.lotsLong.reduce((a, l) => a + l.qty * l.px, 0);
+    const shortCost = p.lotsShort.reduce((a, l) => a + l.qty * l.px, 0);
+
+    const costBasis = longCost - shortCost;
+    const avgPrice = netQty !== 0 ? costBasis / netQty : null;
 
     out.push({
-      ...p,
-      quantity: qty,
+      ticker: p.ticker,
+      currency: p.currency,
+      type: p.type,
+      quantity: netQty,
       costBasis,
       avgPrice,
+      marketPrice: p.marketPrice,
+      lastDate: p.lastTs,
     });
   }
 
-  // Sort biggest market value first (fallback: cost basis)
-  out.sort((a, b) => {
-    const amv = a.marketPrice != null ? a.marketPrice * a.quantity : a.costBasis;
-    const bmv = b.marketPrice != null ? b.marketPrice * b.quantity : b.costBasis;
-    return Math.abs(bmv) - Math.abs(amv);
-  });
+  // Sort by size (rough)
+  out.sort((a, b) => Math.abs((b.marketPrice || 0) * b.quantity) - Math.abs((a.marketPrice || 0) * a.quantity));
 
   return out;
 }
