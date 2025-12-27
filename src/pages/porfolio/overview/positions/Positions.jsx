@@ -34,7 +34,7 @@ const toBase = (value, from, to) => {
 export default function Positions() {
   const [rows, setRows] = useState([]);
   const [cashRows, setCashRows] = useState([]);
-  const [displayCurrency, setDisplayCurrency] = useState("AUD");
+  const [displayCurrency, setDisplayCurrency] = useState("AUD"); // "AUD" | "USD" | "EUR" | "MARKET"
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -55,7 +55,10 @@ export default function Positions() {
           rCash.ok ? rCash.json() : [],
         ]);
 
-        const allTrades = [...(Array.isArray(trades) ? trades : []), ...(Array.isArray(crypto) ? crypto : [])];
+        const allTrades = [
+          ...(Array.isArray(trades) ? trades : []),
+          ...(Array.isArray(crypto) ? crypto : []),
+        ];
 
         // Normalise & sort by date (string YYYY-MM-DD)
         const normalised = allTrades
@@ -97,15 +100,23 @@ export default function Positions() {
   }, []);
 
   const rowsWithDisplay = useMemo(() => {
+    const isMarket = displayCurrency === "MARKET";
+
     return rows.map((p) => {
       const marketValue = p.marketPrice != null ? p.quantity * p.marketPrice : null;
       const unrealised = marketValue != null ? marketValue - p.costBasis : null;
 
+      // If MARKET: do not convert — display in the instrument's own currency
       const mvDisplay =
-        marketValue == null ? null : toBase(marketValue, p.currency, displayCurrency);
-      const cbDisplay = toBase(p.costBasis, p.currency, displayCurrency);
+        marketValue == null ? null : isMarket ? marketValue : toBase(marketValue, p.currency, displayCurrency);
+
+      const cbDisplay = isMarket ? p.costBasis : toBase(p.costBasis, p.currency, displayCurrency);
+
       const upnlDisplay =
-        unrealised == null ? null : toBase(unrealised, p.currency, displayCurrency);
+        unrealised == null ? null : isMarket ? unrealised : toBase(unrealised, p.currency, displayCurrency);
+
+      const avgDisplay =
+        p.avgPrice == null ? null : isMarket ? p.avgPrice : toBase(p.avgPrice, p.currency, displayCurrency);
 
       return {
         ...p,
@@ -114,6 +125,8 @@ export default function Positions() {
         mvDisplay,
         cbDisplay,
         upnlDisplay,
+        avgDisplay,
+        displayCcy: isMarket ? p.currency : displayCurrency, // per-row currency when Market
       };
     });
   }, [rows, displayCurrency]);
@@ -126,10 +139,8 @@ export default function Positions() {
         <div className="positions-controls">
           <label className="currency-pill">
             P/L currency:&nbsp;
-            <select
-              value={displayCurrency}
-              onChange={(e) => setDisplayCurrency(e.target.value)}
-            >
+            <select value={displayCurrency} onChange={(e) => setDisplayCurrency(e.target.value)}>
+              <option value="MARKET">Market</option>
               {Object.keys(EXCHANGE_RATES).map((c) => (
                 <option key={c} value={c}>
                   {c}
@@ -150,7 +161,9 @@ export default function Positions() {
                 <th className="num">Market Value</th>
                 <th className="num">Avg. Price</th>
                 <th className="num">Cost Basis</th>
-                <th className="num">Unrealised P&amp;L ({displayCurrency})</th>
+                <th className="num">
+                  Unrealised P&amp;L ({displayCurrency === "MARKET" ? "Market" : displayCurrency})
+                </th>
               </tr>
             </thead>
 
@@ -170,8 +183,7 @@ export default function Positions() {
               ) : (
                 rowsWithDisplay.map((p) => {
                   const pnl = p.upnlDisplay;
-                  const pnlClass =
-                    pnl == null ? "" : pnl > 0 ? "pos" : pnl < 0 ? "neg" : "";
+                  const pnlClass = pnl == null ? "" : pnl > 0 ? "pos" : pnl < 0 ? "neg" : "";
 
                   return (
                     <tr key={`${p.ticker}_${p.currency}_${p.type}`}>
@@ -187,19 +199,17 @@ export default function Positions() {
                       <td className="num">{fmtNum(p.quantity, 6)}</td>
 
                       <td className="num">
-                        {p.mvDisplay == null ? "—" : fmtMoney(p.mvDisplay, displayCurrency)}
+                        {p.mvDisplay == null ? "—" : fmtMoney(p.mvDisplay, p.displayCcy)}
                       </td>
 
                       <td className="num">
-                        {p.avgPrice == null ? "—" : fmtMoney(toBase(p.avgPrice, p.currency, displayCurrency), displayCurrency)}
+                        {p.avgDisplay == null ? "—" : fmtMoney(p.avgDisplay, p.displayCcy)}
                       </td>
 
-                      <td className="num">
-                        {fmtMoney(p.cbDisplay, displayCurrency)}
-                      </td>
+                      <td className="num">{fmtMoney(p.cbDisplay, p.displayCcy)}</td>
 
                       <td className={`num ${pnlClass}`}>
-                        {pnl == null ? "—" : fmtMoney(pnl, displayCurrency)}
+                        {p.upnlDisplay == null ? "—" : fmtMoney(p.upnlDisplay, p.displayCcy)}
                       </td>
                     </tr>
                   );
@@ -224,7 +234,9 @@ export default function Positions() {
               <tr>
                 <th>Currency</th>
                 <th className="num">Balance</th>
-                <th className="num">Balance ({displayCurrency})</th>
+                <th className="num">
+                  Balance ({displayCurrency === "MARKET" ? "Market" : displayCurrency})
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -245,7 +257,11 @@ export default function Positions() {
                   <tr key={c.currency}>
                     <td>{c.currency}</td>
                     <td className="num">{fmtMoney(c.balance, c.currency)}</td>
-                    <td className="num">{fmtMoney(toBase(c.balance, c.currency, displayCurrency), displayCurrency)}</td>
+                    <td className="num">
+                      {displayCurrency === "MARKET"
+                        ? "—"
+                        : fmtMoney(toBase(c.balance, c.currency, displayCurrency), displayCurrency)}
+                    </td>
                   </tr>
                 ))
               )}
@@ -352,7 +368,7 @@ function summariseCash(cashRows) {
     if (!byCcy.has(key)) byCcy.set(key, 0);
 
     const sign = c.entryType === "withdrawal" ? -1 : 1;
-    byCcy.set(key, byCcy.get(key) + sign * (Number(c.amount || 0)));
+    byCcy.set(key, byCcy.get(key) + sign * Number(c.amount || 0));
   }
 
   return Array.from(byCcy.entries())
