@@ -355,8 +355,9 @@ function buildPositions(trades) {
         ticker: t.ticker,
         currency: t.currency,
         type: t.type,
+        lots: [], // FIFO lots for LONG side only (each lot: { qty, unitCost })
         quantity: 0,
-        costBasis: 0, // in trade currency
+        costBasis: 0,
         avgPrice: null,
         marketPrice: null,
         lastDate: "",
@@ -365,7 +366,7 @@ function buildPositions(trades) {
 
     const p = map.get(key);
 
-    // Update placeholder market price (last trade)
+    // last trade price as placeholder market price
     if (useLastTradeAsMarketPrice) {
       p.marketPrice = t.price;
       p.lastDate = t.date;
@@ -375,41 +376,58 @@ function buildPositions(trades) {
     const px = Number(t.price || 0);
     const fee = Number(t.fee || 0);
 
-    // Buy (q > 0): cost increases by (q*px + fee)
-    if (q > 0) {
-      const newQty = p.quantity + q;
-      const newCost = p.costBasis + q * px + fee;
+    if (!q || !px) continue;
 
-      p.quantity = newQty;
-      p.costBasis = newCost;
-      p.avgPrice = newQty !== 0 ? newCost / newQty : null;
+    // BUY (adds a lot)
+    if (q > 0) {
+      const unitFee = q !== 0 ? fee / q : 0;
+      const unitCost = px + unitFee; // allocate buy fee into unit cost
+
+      p.lots.push({ qty: q, unitCost });
       continue;
     }
 
-    // Sell (q < 0): reduce qty; reduce cost basis by avgCost * abs(q)
+    // SELL (consume lots FIFO)
     if (q < 0) {
-      const sellQty = Math.abs(q);
+      let remainingToSell = Math.abs(q);
 
-      // If no position yet (or weird crossing), use current avg if possible, else trade price
-      const currentAvg = p.quantity !== 0 ? p.costBasis / p.quantity : px;
+      // NOTE: we are not doing short lots here yet.
+      // If you sell more than you hold, we’ll stop at zero (or you can extend to short support).
+      while (remainingToSell > 1e-12 && p.lots.length > 0) {
+        const lot = p.lots[0];
 
-      const newQty = p.quantity - sellQty;
-      const reduceCost = currentAvg * sellQty;
+        const take = Math.min(lot.qty, remainingToSell);
+        lot.qty -= take;
+        remainingToSell -= take;
 
-      // Fee on sell: treat as extra cost (reduces proceeds), so add fee to cost basis
-      const newCost = p.costBasis - reduceCost + fee;
+        if (lot.qty <= 1e-12) p.lots.shift();
+      }
 
-      p.quantity = newQty;
-      p.costBasis = newCost;
-      p.avgPrice = newQty !== 0 ? newCost / newQty : null;
+      // If remainingToSell > 0 here, you went net short.
+      // We can add short support later (it’s a separate FIFO queue).
       continue;
     }
   }
 
-  // Keep only non-zero positions
-  const out = Array.from(map.values()).filter((p) => Math.abs(p.quantity) > 1e-12);
+  // Build summary fields from remaining lots
+  const out = [];
 
-  // Sort: biggest market value first (fallback: cost basis)
+  for (const p of map.values()) {
+    const qty = p.lots.reduce((a, l) => a + l.qty, 0);
+    if (Math.abs(qty) <= 1e-12) continue;
+
+    const costBasis = p.lots.reduce((a, l) => a + l.qty * l.unitCost, 0);
+    const avgPrice = qty !== 0 ? costBasis / qty : null;
+
+    out.push({
+      ...p,
+      quantity: qty,
+      costBasis,
+      avgPrice,
+    });
+  }
+
+  // Sort biggest market value first (fallback: cost basis)
   out.sort((a, b) => {
     const amv = a.marketPrice != null ? a.marketPrice * a.quantity : a.costBasis;
     const bmv = b.marketPrice != null ? b.marketPrice * b.quantity : b.costBasis;
@@ -418,6 +436,7 @@ function buildPositions(trades) {
 
   return out;
 }
+
 
 function summariseCash(cashRows) {
   const byCcy = new Map();
