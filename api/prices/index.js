@@ -109,9 +109,10 @@ export default async function handler(req, res) {
         }));
 
         if (ops.length) await col.bulkWrite(ops);
-      } catch {
-        // swallow live errors → fallback to cache
-      }
+        } catch (e) {
+          console.error("Live fetch failed (prices):", e?.message || e);
+          // fallback to cache
+        }
     }
 
     // 4) merge response
