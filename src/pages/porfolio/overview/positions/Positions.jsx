@@ -1,28 +1,18 @@
 import React, { useEffect, useMemo, useState } from "react";
 import "../../../../css/positionsTab.css";
 
-/**
- * FX rates (placeholder)
- * Rates are "1 unit = rate AUD" (same style you used in Ledger)
- */
+// Replace later with live FX rates (API), but fine for now:
 const EXCHANGE_RATES = { AUD: 1, USD: 1.65, EUR: 1.8 };
 
-/**
- * If a live price can't be fetched, we fallback to last trade price.
- */
+// If live price fails + cache missing, we can still fall back to last trade price:
 const useLastTradeAsMarketPrice = true;
 
-async function safeJson(res) {
-  const ct = res.headers.get("content-type") || "";
-  if (!ct.includes("application/json")) {
-    const text = await res.text();
-    throw new Error(`Expected JSON, got: ${ct}. Body starts: ${text.slice(0, 60)}`);
-  }
-  return res.json();
-}
+// Cache freshness (for the “stale” badge)
+const STALE_AFTER_HOURS = 24;
 
+// Dropdown options
+const DISPLAY_OPTIONS = ["MARKET", ...Object.keys(EXCHANGE_RATES)];
 
-/** ---------- formatting helpers ---------- */
 const fmtMoney = (n, ccy = "AUD") => {
   const num = Number(n || 0);
   return num.toLocaleString(undefined, {
@@ -32,7 +22,7 @@ const fmtMoney = (n, ccy = "AUD") => {
   });
 };
 
-const fmtNum = (n, dp = 6) => {
+const fmtNum = (n, dp = 2) => {
   const num = Number(n || 0);
   return num.toLocaleString(undefined, { maximumFractionDigits: dp });
 };
@@ -41,20 +31,50 @@ const toBase = (value, from, to) => {
   const v = Number(value || 0);
   const rFrom = EXCHANGE_RATES[from] ?? 1;
   const rTo = EXCHANGE_RATES[to] ?? 1;
+  // rates are "1 unit = rate AUD" (like your ledger)
   return (v * rFrom) / rTo;
 };
+
+async function safeJson(res) {
+  try {
+    const ct = res.headers.get("content-type") || "";
+    if (!ct.includes("application/json")) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+function hoursSince(iso) {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return null;
+  return (Date.now() - t) / (1000 * 60 * 60);
+}
+
+function priceBadgeLabel(source, asOfIso) {
+  const src = String(source || "").toUpperCase();
+  const ageHrs = hoursSince(asOfIso);
+
+  // Normalise the main badge name
+  let main = "LAST";
+  if (src.includes("LIVE")) main = "LIVE";
+  else if (src.includes("CACHE")) main = "CACHED";
+  else if (src) main = src;
+
+  // Add stale marker when cached/unknown and old
+  const stale =
+    ageHrs != null && ageHrs > STALE_AFTER_HOURS && main !== "LIVE";
+
+  if (stale) return `${main} · STALE`;
+  return main;
+}
 
 export default function Positions() {
   const [rows, setRows] = useState([]);
   const [cashRows, setCashRows] = useState([]);
-
-  // "AUD" | "USD" | "EUR" | "MARKET"
-  const [displayCurrency, setDisplayCurrency] = useState("AUD");
-
+  const [displayCurrency, setDisplayCurrency] = useState("AUD"); // "AUD" | "USD" | "EUR" | "MARKET"
   const [loading, setLoading] = useState(true);
-
-  // live prices by ticker: { AMZN: { price: 212.34, currency: "USD" } }
-  const [prices, setPrices] = useState({});
 
   useEffect(() => {
     const run = async () => {
@@ -69,9 +89,9 @@ export default function Positions() {
         ]);
 
         const [trades, crypto, cash] = await Promise.all([
-          rTrades.ok ? rTrades.json() : [],
-          rCrypto.ok ? rCrypto.json() : [],
-          rCash.ok ? rCash.json() : [],
+          rTrades.ok ? safeJson(rTrades) : [],
+          rCrypto.ok ? safeJson(rCrypto) : [],
+          rCash.ok ? safeJson(rCash) : [],
         ]);
 
         const allTrades = [
@@ -96,7 +116,47 @@ export default function Positions() {
           a.date < b.date ? -1 : a.date > b.date ? 1 : 0
         );
 
+        // Build FIFO open positions (marketPrice initially = last trade price placeholder)
         const positions = buildPositionsFIFO(normalised);
+
+        // ---- Live price with DB cache fallback ----
+        // We call /api/prices which is responsible for:
+        // 1) live fetch
+        // 2) fallback to cached DB price
+        // 3) null if none
+        const symbols = Array.from(
+          new Set(positions.map((p) => String(p.ticker || "").toUpperCase()))
+        ).filter(Boolean);
+
+        let priceMap = {};
+        if (symbols.length > 0) {
+          const rPrices = await fetch(`/api/prices?symbols=${symbols.join(",")}`);
+          const data = rPrices.ok ? await safeJson(rPrices) : null;
+          priceMap = data && typeof data === "object" ? data : {};
+        }
+
+        const mergedPositions = positions.map((p) => {
+          const info = priceMap?.[p.ticker];
+
+          // If we got a price (live OR cached), prefer it
+          if (info && info.price != null) {
+            return {
+              ...p,
+              marketPrice: Number(info.price),
+              marketAsOf: info.asOf || null,
+              marketSource: info.source || "cache",
+              // keep currency from your trades for FX conversion
+              // if provider returns different currency, you can reconcile later
+            };
+          }
+
+          // If nothing from /api/prices, fall back to last trade price (already set by builder)
+          return {
+            ...p,
+            marketAsOf: null,
+            marketSource: useLastTradeAsMarketPrice ? "last-trade" : "none",
+          };
+        });
 
         // Cash holdings: sum deposits/withdrawals by currency
         const cashNormalised = (Array.isArray(cash) ? cash : []).map((c) => ({
@@ -106,33 +166,12 @@ export default function Positions() {
           amount: Number(c.amount || 0),
         }));
 
-        setRows(positions);
+        setRows(mergedPositions);
         setCashRows(summariseCash(cashNormalised));
-
-        // Fetch live prices (US stocks) via your serverless /api/prices endpoint
-        // Only fetch for unique tickers
-        const symbols = Array.from(new Set(positions.map((p) => p.ticker))).filter(
-          Boolean
-        );
-
-        if (symbols.length) {
-          try {
-            const rPrices = await fetch(
-              `/api/prices?symbols=${encodeURIComponent(symbols.join(","))}`
-            );
-            if (!rPrices.ok) throw new Error(`Prices failed: ${rPrices.status}`);
-            const pmap = await safeJson(rPrices);
-            setPrices(pmap && typeof pmap === "object" ? pmap : {});
-          } catch (e) {
-            console.warn("Live prices unavailable, using fallback:", e);
-            setPrices({});
-          }
-        }
       } catch (e) {
         console.error("Positions fetch failed:", e);
         setRows([]);
         setCashRows([]);
-        setPrices({});
       } finally {
         setLoading(false);
       }
@@ -143,52 +182,42 @@ export default function Positions() {
 
   const rowsWithDisplay = useMemo(() => {
     return rows.map((p) => {
-      // live market price (if available)
-      const live = prices?.[p.ticker]?.price;
-      const livePrice =
-        Number.isFinite(Number(live)) && Number(live) > 0 ? Number(live) : null;
-
-      // choose market price:
-      const marketPrice =
-        livePrice != null ? livePrice : useLastTradeAsMarketPrice ? p.marketPrice : null;
-
       const marketValue =
-        marketPrice != null ? Number(p.quantity || 0) * Number(marketPrice) : null;
-
+        p.marketPrice != null ? p.quantity * p.marketPrice : null;
       const unrealised =
-        marketValue != null ? marketValue - Number(p.costBasis || 0) : null;
+        marketValue != null ? marketValue - p.costBasis : null;
 
-      // MARKET option: show values in the trade's currency
-      const targetCcy = displayCurrency === "MARKET" ? p.currency : displayCurrency;
+      // MARKET mode: show everything in the trade currency (per-row)
+      if (displayCurrency === "MARKET") {
+        return {
+          ...p,
+          marketValue,
+          unrealised,
+          mvDisplay: marketValue,
+          cbDisplay: p.costBasis,
+          upnlDisplay: unrealised,
+          displayCcy: p.currency,
+        };
+      }
 
+      // Fixed currency mode: convert from trade currency -> display currency
       const mvDisplay =
-        marketValue == null ? null : toBase(marketValue, p.currency, targetCcy);
-
-      const cbDisplay = toBase(p.costBasis, p.currency, targetCcy);
-
+        marketValue == null ? null : toBase(marketValue, p.currency, displayCurrency);
+      const cbDisplay = toBase(p.costBasis, p.currency, displayCurrency);
       const upnlDisplay =
-        unrealised == null ? null : toBase(unrealised, p.currency, targetCcy);
-
-      const avgPriceDisplay =
-        p.avgPrice == null ? null : toBase(p.avgPrice, p.currency, targetCcy);
+        unrealised == null ? null : toBase(unrealised, p.currency, displayCurrency);
 
       return {
         ...p,
-        marketPrice,
         marketValue,
         unrealised,
-        targetCcy,
         mvDisplay,
         cbDisplay,
         upnlDisplay,
-        avgPriceDisplay,
-        hasLivePrice: livePrice != null,
+        displayCcy: displayCurrency,
       };
     });
-  }, [rows, displayCurrency, prices]);
-
-  const plHeaderCcyLabel =
-    displayCurrency === "MARKET" ? "Market" : displayCurrency;
+  }, [rows, displayCurrency]);
 
   return (
     <div className="positions-page">
@@ -202,10 +231,9 @@ export default function Positions() {
               value={displayCurrency}
               onChange={(e) => setDisplayCurrency(e.target.value)}
             >
-              <option value="MARKET">Market currency</option>
-              {Object.keys(EXCHANGE_RATES).map((c) => (
+              {DISPLAY_OPTIONS.map((c) => (
                 <option key={c} value={c}>
-                  {c}
+                  {c === "MARKET" ? "Market currency" : c}
                 </option>
               ))}
             </select>
@@ -223,7 +251,9 @@ export default function Positions() {
                 <th className="num">Market Value</th>
                 <th className="num">Avg. Price</th>
                 <th className="num">Cost Basis</th>
-                <th className="num">Unrealised P&amp;L ({plHeaderCcyLabel})</th>
+                <th className="num">
+                  Unrealised P&amp;L ({displayCurrency === "MARKET" ? "Market" : displayCurrency})
+                </th>
               </tr>
             </thead>
 
@@ -246,14 +276,18 @@ export default function Positions() {
                   const pnlClass =
                     pnl == null ? "" : pnl > 0 ? "pos" : pnl < 0 ? "neg" : "";
 
+                  const badge = priceBadgeLabel(p.marketSource, p.marketAsOf);
+
                   return (
                     <tr key={`${p.ticker}_${p.currency}_${p.type}`}>
                       <td>
                         <div className="instrument">
                           <span className="instrument-ticker">{p.ticker}</span>
                           <span className="instrument-meta">
-                            {p.type.toUpperCase()} · {p.currency}
-                            {p.hasLivePrice ? " · LIVE" : useLastTradeAsMarketPrice ? " · LAST" : ""}
+                            {String(p.type || "").toUpperCase()} · {p.currency} ·{" "}
+                            <span className={`price-badge ${badge.includes("LIVE") ? "live" : badge.includes("CACHED") ? "cached" : "last"}`}>
+                              {badge}
+                            </span>
                           </span>
                         </div>
                       </td>
@@ -261,17 +295,28 @@ export default function Positions() {
                       <td className="num">{fmtNum(p.quantity, 6)}</td>
 
                       <td className="num">
-                        {p.mvDisplay == null ? "—" : fmtMoney(p.mvDisplay, p.targetCcy)}
+                        {p.mvDisplay == null
+                          ? "—"
+                          : fmtMoney(p.mvDisplay, p.displayCcy)}
                       </td>
 
                       <td className="num">
-                        {p.avgPriceDisplay == null ? "—" : fmtMoney(p.avgPriceDisplay, p.targetCcy)}
+                        {p.avgPrice == null
+                          ? "—"
+                          : fmtMoney(
+                              displayCurrency === "MARKET"
+                                ? p.avgPrice
+                                : toBase(p.avgPrice, p.currency, displayCurrency),
+                              p.displayCcy
+                            )}
                       </td>
 
-                      <td className="num">{fmtMoney(p.cbDisplay, p.targetCcy)}</td>
+                      <td className="num">
+                        {fmtMoney(p.cbDisplay, p.displayCcy)}
+                      </td>
 
                       <td className={`num ${pnlClass}`}>
-                        {pnl == null ? "—" : fmtMoney(pnl, p.targetCcy)}
+                        {pnl == null ? "—" : fmtMoney(pnl, p.displayCcy)}
                       </td>
                     </tr>
                   );
@@ -282,10 +327,7 @@ export default function Positions() {
         </div>
 
         <p className="positions-note">
-          Market price uses{" "}
-          {Object.keys(prices || {}).length ? "live quotes (when available)" : "no live quotes yet"}.
-          If a quote can’t be found, it falls back to{" "}
-          {useLastTradeAsMarketPrice ? "last trade price" : "—"}.
+          Prices try LIVE first, then fall back to your cached DB price, then (if needed) last trade price.
         </p>
       </div>
 
@@ -298,37 +340,40 @@ export default function Positions() {
               <tr>
                 <th>Currency</th>
                 <th className="num">Balance</th>
-                <th className="num">Balance ({plHeaderCcyLabel})</th>
+                {displayCurrency !== "MARKET" && (
+                  <th className="num">Balance ({displayCurrency})</th>
+                )}
               </tr>
             </thead>
+
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={3} className="positions-empty">
+                  <td colSpan={displayCurrency !== "MARKET" ? 3 : 2} className="positions-empty">
                     Loading…
                   </td>
                 </tr>
               ) : cashRows.length === 0 ? (
                 <tr>
-                  <td colSpan={3} className="positions-empty">
+                  <td colSpan={displayCurrency !== "MARKET" ? 3 : 2} className="positions-empty">
                     No cash entries yet.
                   </td>
                 </tr>
               ) : (
-                cashRows.map((c) => {
-                  const targetCcy =
-                    displayCurrency === "MARKET" ? c.currency : displayCurrency;
-
-                  return (
-                    <tr key={c.currency}>
-                      <td>{c.currency}</td>
-                      <td className="num">{fmtMoney(c.balance, c.currency)}</td>
+                cashRows.map((c) => (
+                  <tr key={c.currency}>
+                    <td>{c.currency}</td>
+                    <td className="num">{fmtMoney(c.balance, c.currency)}</td>
+                    {displayCurrency !== "MARKET" && (
                       <td className="num">
-                        {fmtMoney(toBase(c.balance, c.currency, targetCcy), targetCcy)}
+                        {fmtMoney(
+                          toBase(c.balance, c.currency, displayCurrency),
+                          displayCurrency
+                        )}
                       </td>
-                    </tr>
-                  );
-                })
+                    )}
+                  </tr>
+                ))
               )}
             </tbody>
           </table>
@@ -339,138 +384,120 @@ export default function Positions() {
 }
 
 /**
- * Build open positions using average cost method.
- * - Quantity can be negative (short). We'll still compute avg price + cost basis.
- * - Cost basis is tracked as total cost of the open position.
- * - Market price falls back to last trade price (easy upgrade later).
+ * Build open positions using FIFO lots (more accurate than avg-cost).
+ * - Quantity can go negative (short). We keep it working, but FIFO for shorts can be upgraded later.
+ * - Cost basis reflects the remaining open lots (in trade currency).
+ * - marketPrice initially uses last trade price as placeholder (easy fallback).
  */
 function buildPositionsFIFO(trades) {
   // key: ticker|currency|type
   const map = new Map();
 
-  const getKey = (t) => `${t.ticker}|${t.currency}|${t.type}`;
-
-  // Sort oldest -> newest (FIFO needs this)
-  const sorted = [...trades].sort((a, b) => {
-    const at = a.ts || a.date || "";
-    const bt = b.ts || b.date || "";
-    return at < bt ? -1 : at > bt ? 1 : 0;
-  });
-
-  for (const t of sorted) {
-    const key = getKey(t);
-
+  for (const t of trades) {
+    const key = `${t.ticker}|${t.currency}|${t.type}`;
     if (!map.has(key)) {
       map.set(key, {
         ticker: t.ticker,
         currency: t.currency,
         type: t.type,
-        lotsLong: [],  // [{qty, px}]
-        lotsShort: [], // [{qty, px}] qty is positive “shares short”
+        lots: [], // [{ qty, price }] FIFO queue, qty > 0 for long lots
+        quantity: 0,
+        costBasis: 0,
+        avgPrice: null,
         marketPrice: null,
-        lastTs: "",
+        lastDate: "",
       });
     }
 
     const p = map.get(key);
 
-    // last trade price as placeholder “market”
-    if (useLastTradeAsMarketPrice && Number.isFinite(t.price)) {
+    // last trade price fallback
+    if (useLastTradeAsMarketPrice && t.price != null) {
       p.marketPrice = t.price;
-      p.lastTs = t.ts || t.date || "";
+      p.lastDate = t.date;
     }
 
-    let q = Number(t.quantity || 0);
+    const q = Number(t.quantity || 0);
     const px = Number(t.price || 0);
     const fee = Number(t.fee || 0);
 
-    if (!q || !Number.isFinite(px)) continue;
-
-    // Helper: allocate fee per share for the trade being applied (simple + fair enough)
-    // This keeps FIFO stable and avoids fees “exploding” the avg cost.
-    const feePerShare = Math.abs(q) > 0 ? fee / Math.abs(q) : 0;
-
-    // BUY (q > 0)
+    // BUY (q > 0): add a lot. (We ignore fee allocation per-lot for now; we apply it to costBasis.)
     if (q > 0) {
-      // If currently short, buys should cover shorts FIFO first
-      while (q > 0 && p.lotsShort.length > 0) {
-        const lot = p.lotsShort[0];
-        const cover = Math.min(q, lot.qty);
-
-        lot.qty -= cover;
-        q -= cover;
-
-        if (lot.qty <= 1e-12) p.lotsShort.shift();
-      }
-
-      // Any remaining buy becomes a new long lot
-      if (q > 0) {
-        p.lotsLong.push({ qty: q, px: px + feePerShare }); // bake fee into lot cost
-      }
-
+      p.lots.push({ qty: q, price: px });
+      p.quantity += q;
+      p.costBasis += q * px + fee;
+      p.avgPrice = p.quantity !== 0 ? p.costBasis / p.quantity : null;
       continue;
     }
 
-    // SELL (q < 0)
+    // SELL (q < 0): remove from FIFO lots
     if (q < 0) {
-      let sellQty = Math.abs(q);
+      let toSell = Math.abs(q);
 
-      // If currently long, sells consume long lots FIFO first
-      while (sellQty > 0 && p.lotsLong.length > 0) {
-        const lot = p.lotsLong[0];
-        const take = Math.min(sellQty, lot.qty);
+      // If no lots (shorting), we’ll just let quantity go negative and treat costBasis roughly.
+      // (If you want proper short-lot FIFO later, we’ll implement separate short lots.)
+      if (p.lots.length === 0) {
+        p.quantity -= toSell;
+        // fee: keep as cost drag
+        p.costBasis += fee;
+        p.avgPrice = p.quantity !== 0 ? p.costBasis / p.quantity : null;
+        continue;
+      }
+
+      // Consume FIFO lots
+      while (toSell > 0 && p.lots.length > 0) {
+        const lot = p.lots[0];
+        const take = Math.min(lot.qty, toSell);
+
+        // Reduce cost basis by the lot cost we’re closing out
+        p.costBasis -= take * lot.price;
 
         lot.qty -= take;
-        sellQty -= take;
+        toSell -= take;
+        p.quantity -= take;
 
-        if (lot.qty <= 1e-12) p.lotsLong.shift();
+        if (lot.qty <= 1e-12) p.lots.shift();
       }
 
-      // Any remaining sell becomes / adds to a short lot
-      if (sellQty > 0) {
-        p.lotsShort.push({ qty: sellQty, px: px - feePerShare }); 
-        // note: fee on sell reduces proceeds; for “cost view” this convention is OK.
+      // Apply fee as cost drag (so unrealised reflects it too)
+      p.costBasis += fee;
+
+      // If you sold more than you had (crossed into short), reflect remaining sell
+      if (toSell > 0) {
+        p.quantity -= toSell;
+        // No lot cost to remove for the short portion here (upgrade later)
       }
 
+      p.avgPrice = p.quantity !== 0 ? p.costBasis / p.quantity : null;
       continue;
     }
   }
 
-  // Convert lots into position rows
-  const out = [];
-
-  for (const p of map.values()) {
-    const longQty = p.lotsLong.reduce((a, l) => a + l.qty, 0);
-    const shortQty = p.lotsShort.reduce((a, l) => a + l.qty, 0);
-    const netQty = longQty - shortQty;
-
-    if (Math.abs(netQty) <= 1e-12) continue;
-
-    // Cost basis: long lots add cost, short lots subtract cost (so avgPrice still works)
-    const longCost = p.lotsLong.reduce((a, l) => a + l.qty * l.px, 0);
-    const shortCost = p.lotsShort.reduce((a, l) => a + l.qty * l.px, 0);
-
-    const costBasis = longCost - shortCost;
-    const avgPrice = netQty !== 0 ? costBasis / netQty : null;
-
-    out.push({
+  // Keep only non-zero positions
+  const out = Array.from(map.values())
+    .filter((p) => Math.abs(p.quantity) > 1e-12)
+    .map((p) => ({
       ticker: p.ticker,
       currency: p.currency,
       type: p.type,
-      quantity: netQty,
-      costBasis,
-      avgPrice,
+      quantity: p.quantity,
+      costBasis: p.costBasis,
+      avgPrice: p.avgPrice,
       marketPrice: p.marketPrice,
-      lastDate: p.lastTs,
-    });
-  }
+      lastDate: p.lastDate,
+      marketSource: useLastTradeAsMarketPrice ? "last-trade" : "none",
+      marketAsOf: null,
+    }));
 
-  // Sort by size (rough)
-  out.sort((a, b) => Math.abs((b.marketPrice || 0) * b.quantity) - Math.abs((a.marketPrice || 0) * a.quantity));
+  // Sort: biggest market value first (fallback: cost basis)
+  out.sort((a, b) => {
+    const amv = a.marketPrice != null ? a.marketPrice * a.quantity : a.costBasis;
+    const bmv = b.marketPrice != null ? b.marketPrice * b.quantity : b.costBasis;
+    return Math.abs(bmv) - Math.abs(amv);
+  });
 
   return out;
 }
-
 
 function summariseCash(cashRows) {
   const byCcy = new Map();
