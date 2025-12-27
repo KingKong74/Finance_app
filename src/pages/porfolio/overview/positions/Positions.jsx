@@ -12,6 +12,16 @@ const EXCHANGE_RATES = { AUD: 1, USD: 1.65, EUR: 1.8 };
  */
 const useLastTradeAsMarketPrice = true;
 
+async function safeJson(res) {
+  const ct = res.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) {
+    const text = await res.text();
+    throw new Error(`Expected JSON, got: ${ct}. Body starts: ${text.slice(0, 60)}`);
+  }
+  return res.json();
+}
+
+
 /** ---------- formatting helpers ---------- */
 const fmtMoney = (n, ccy = "AUD") => {
   const num = Number(n || 0);
@@ -106,13 +116,17 @@ export default function Positions() {
         );
 
         if (symbols.length) {
-          const rPrices = await fetch(
-            `/api/prices?symbols=${encodeURIComponent(symbols.join(","))}`
-          );
-          const pmap = rPrices.ok ? await rPrices.json() : {};
-          setPrices(pmap && typeof pmap === "object" ? pmap : {});
-        } else {
-          setPrices({});
+          try {
+            const rPrices = await fetch(
+              `/api/prices?symbols=${encodeURIComponent(symbols.join(","))}`
+            );
+            if (!rPrices.ok) throw new Error(`Prices failed: ${rPrices.status}`);
+            const pmap = await safeJson(rPrices);
+            setPrices(pmap && typeof pmap === "object" ? pmap : {});
+          } catch (e) {
+            console.warn("Live prices unavailable, using fallback:", e);
+            setPrices({});
+          }
         }
       } catch (e) {
         console.error("Positions fetch failed:", e);
