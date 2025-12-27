@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+// Overview.jsx
+import React, { useState } from "react";
 import "../../../css/overviewTab.css";
 
 import { accounts, overviewTabs } from "./dashboard/overviewData";
@@ -6,18 +7,24 @@ import AccountsPanel from "./components/AccountsPanel";
 import Dashboard from "./dashboard/Dashboard";
 import Positions from "./positions/Positions";
 
-export default function Overview() {
+export default function Overview({ data, loading }) {
   const [range, setRange] = useState("YTD");
   const [selectedAccount, setSelectedAccount] = useState("All Accounts");
   const [expandedAccount, setExpandedAccount] = useState(null);
   const [panelOpen, setPanelOpen] = useState(true);
   const [overviewTab, setOverviewTab] = useState("Dashboard");
 
-  // ✅ Dashboard fetch-once cache (per visit)
-  const [dashboardLoading, setDashboardLoading] = useState(false);
-  const [dashboardLoaded, setDashboardLoaded] = useState(false);
-  const [dashboardData, setDashboardData] = useState(null);
+  // Basic loading state for the entire Overview tab
+  if (loading) {
+    return (
+      <div className="overview-grid-wrapper">
+        <p style={{ padding: "2rem" }}>Loading…</p>
+      </div>
+    );
+  }
 
+  // If you haven't wired /api/overview yet, data may be null.
+  // Keep rendering the UI (accounts/overviewData are static for now).
   const activeAccount =
     accounts.find((a) => a.name === selectedAccount) || accounts[0];
 
@@ -25,38 +32,6 @@ export default function Overview() {
     activeAccount.total - activeAccount.pl !== 0
       ? (activeAccount.pl / (activeAccount.total - activeAccount.pl)) * 100
       : 0;
-
-  useEffect(() => {
-    // Entering Dashboard: fetch once
-    if (overviewTab === "Dashboard" && !dashboardLoaded && !dashboardLoading) {
-      (async () => {
-        try {
-          setDashboardLoading(true);
-
-          // TODO: replace with your real endpoint(s)
-          // If Dashboard currently uses local/static data, this can be a no-op for now.
-          const r = await fetch("/api/overview"); // <— your future overview endpoint
-          const data = await r.json();
-
-          setDashboardData(data);
-          setDashboardLoaded(true);
-        } catch (e) {
-          console.error("Dashboard fetch failed:", e);
-          setDashboardData(null);
-          setDashboardLoaded(false);
-        } finally {
-          setDashboardLoading(false);
-        }
-      })();
-    }
-
-    // Leaving Dashboard: clear cache (so next time it refetches)
-    if (overviewTab !== "Dashboard" && dashboardLoaded) {
-      setDashboardData(null);
-      setDashboardLoaded(false);
-      setDashboardLoading(false);
-    }
-  }, [overviewTab, dashboardLoaded, dashboardLoading]);
 
   return (
     <div className="overview-grid-wrapper">
@@ -84,18 +59,15 @@ export default function Overview() {
         </div>
 
         {overviewTab === "Dashboard" && (
-          dashboardLoading ? (
-            <div style={{ padding: "2rem" }}>Loading…</div>
-          ) : (
-            <Dashboard
-              range={range}
-              onRangeChange={setRange}
-              selectedAccount={selectedAccount}
-              activeAccount={activeAccount}
-              rateOfReturn={rateOfReturn}
-              dashboardData={dashboardData} // optional: pass through
-            />
-          )
+          <Dashboard
+            range={range}
+            onRangeChange={setRange}
+            selectedAccount={selectedAccount}
+            activeAccount={activeAccount}
+            rateOfReturn={rateOfReturn}
+            // Optional: pass API data down when you wire it
+            overviewData={data}
+          />
         )}
 
         {overviewTab === "Positions" && <Positions />}
