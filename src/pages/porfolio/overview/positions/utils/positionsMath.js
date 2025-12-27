@@ -1,23 +1,38 @@
 // src/pages/portfolio/positions/utils/positionsMath.js
 
 /**
- * Build open positions using FIFO lots (more accurate than avg-cost).
- * - Quantity can go negative (short). We keep it working, but FIFO for shorts can be upgraded later.
- * - Cost basis reflects the remaining open lots (in trade currency).
- * - marketPrice initially uses last trade price as placeholder (easy fallback).
+ * FIFO open-position builder that supports BOTH long and short lots.
+ *
+ * Conventions:
+ * - quantity is signed: long > 0, short < 0
+ * - lots store signed qty:
+ *   - long lot:  { qty: +10, price: 100 }
+ *   - short lot: { qty: -10, price: 100 }
+ * - costBasis is the signed sum of open lots (plus fees applied as "cost drag"):
+ *   - long:  positive cost basis
+ *   - short: negative cost basis (represents proceeds from the short sale)
+ *
+ * With your UI formula:
+ *   marketValue = quantity * marketPrice
+ *   unrealised  = marketValue - costBasis
+ * …this gives correct signs for shorts.
  */
-export function buildPositionsFIFO(trades, { useLastTradeAsMarketPrice = true } = {}) {
+export function buildPositionsFIFO(
+  trades,
+  { useLastTradeAsMarketPrice = true } = {}
+) {
   // key: ticker|currency|type
   const map = new Map();
 
   for (const t of trades) {
     const key = `${t.ticker}|${t.currency}|${t.type}`;
+
     if (!map.has(key)) {
       map.set(key, {
         ticker: t.ticker,
         currency: t.currency,
         type: t.type,
-        lots: [], // [{ qty, price }] FIFO queue, qty > 0 for long lots
+        lots: [], // FIFO queue: [{ qty (signed), price }]
         quantity: 0,
         costBasis: 0,
         avgPrice: null,
@@ -28,9 +43,9 @@ export function buildPositionsFIFO(trades, { useLastTradeAsMarketPrice = true } 
 
     const p = map.get(key);
 
-    // last trade price fallback
+    // last trade price fallback (kept same behaviour as before)
     if (useLastTradeAsMarketPrice && t.price != null) {
-      p.marketPrice = t.price;
+      p.marketPrice = Number(t.price);
       p.lastDate = t.date;
     }
 
@@ -38,56 +53,68 @@ export function buildPositionsFIFO(trades, { useLastTradeAsMarketPrice = true } 
     const px = Number(t.price || 0);
     const fee = Number(t.fee || 0);
 
-    // BUY (q > 0): add a lot.
-    if (q > 0) {
-      p.lots.push({ qty: q, price: px });
-      p.quantity += q;
-      p.costBasis += q * px + fee;
-      p.avgPrice = p.quantity !== 0 ? p.costBasis / p.quantity : null;
-      continue;
+    if (!q) continue;
+
+    // Helper: sign of a number as -1, 0, +1
+    const sgn = (n) => (n > 0 ? 1 : n < 0 ? -1 : 0);
+
+    // We will "apply" this trade by first netting against opposite-direction lots FIFO,
+    // then (if leftover) opening a new lot in the trade direction.
+    let remaining = q;
+
+    // While we still have remaining qty AND there is an opposite-direction open lot at the front
+    while (
+      remaining !== 0 &&
+      p.lots.length > 0 &&
+      sgn(p.lots[0].qty) !== sgn(remaining)
+    ) {
+      const lot = p.lots[0];
+
+      const lotSign = sgn(lot.qty); // +1 long lot, -1 short lot
+      const takeAbs = Math.min(Math.abs(remaining), Math.abs(lot.qty));
+
+      // Reduce lot towards zero by takeAbs (keeping sign)
+      lot.qty = lot.qty - lotSign * takeAbs;
+
+      // Position quantity moves opposite to the lot sign when closing
+      // - closing long reduces qty
+      // - closing short increases qty (towards zero)
+      p.quantity += -lotSign * takeAbs;
+
+      // Remove that portion from costBasis:
+      // long lot: costBasis -= +takeAbs*price (reduces)
+      // short lot: costBasis -= -takeAbs*price (increases, less negative)
+      p.costBasis -= lotSign * takeAbs * lot.price;
+
+      // Consume remaining trade qty:
+      // if remaining is + (buy), covering short -> remaining decreases
+      // if remaining is - (sell), selling long -> remaining increases towards 0
+      remaining = remaining - sgn(remaining) * takeAbs;
+
+      // Drop lot if fully closed
+      if (Math.abs(lot.qty) <= 1e-12) p.lots.shift();
     }
 
-    // SELL (q < 0): remove from FIFO lots
-    if (q < 0) {
-      let toSell = Math.abs(q);
+    // If we still have remaining, it becomes a NEW open lot in that direction
+    if (remaining !== 0) {
+      p.lots.push({ qty: remaining, price: px });
 
-      // If no lots (shorting), we’ll just let quantity go negative and treat costBasis roughly.
-      // (If you want proper short-lot FIFO later, we’ll implement separate short lots.)
-      if (p.lots.length === 0) {
-        p.quantity -= toSell;
-        // fee: keep as cost drag
-        p.costBasis += fee;
-        p.avgPrice = p.quantity !== 0 ? p.costBasis / p.quantity : null;
-        continue;
-      }
+      // Quantity increases by remaining (signed)
+      p.quantity += remaining;
 
-      // Consume FIFO lots
-      while (toSell > 0 && p.lots.length > 0) {
-        const lot = p.lots[0];
-        const take = Math.min(lot.qty, toSell);
-
-        // Reduce cost basis by the lot cost we’re closing out
-        p.costBasis -= take * lot.price;
-
-        lot.qty -= take;
-        toSell -= take;
-        p.quantity -= take;
-
-        if (lot.qty <= 1e-12) p.lots.shift();
-      }
-
-      // Apply fee as cost drag (so unrealised reflects it too)
-      p.costBasis += fee;
-
-      // If you sold more than you had (crossed into short), reflect remaining sell
-      if (toSell > 0) {
-        p.quantity -= toSell;
-        // No lot cost to remove for the short portion here (upgrade later)
-      }
-
-      p.avgPrice = p.quantity !== 0 ? p.costBasis / p.quantity : null;
-      continue;
+      // Cost basis adds signed notional
+      // long: +qty*price
+      // short: -qtyAbs*price (negative)
+      p.costBasis += remaining * px;
     }
+
+    // Fee as "cost drag" on the open position.
+    // We keep behaviour consistent with your current code: add fee directly.
+    // (If later you want perfect fee semantics for negative-fee inputs, we can normalise fees.)
+    p.costBasis += fee;
+
+    // Avg price is costBasis / quantity (works for both signs; short becomes positive)
+    p.avgPrice = p.quantity !== 0 ? p.costBasis / p.quantity : null;
   }
 
   // Keep only non-zero positions
@@ -106,7 +133,7 @@ export function buildPositionsFIFO(trades, { useLastTradeAsMarketPrice = true } 
       marketAsOf: null,
     }));
 
-  // Sort: biggest market value first (fallback: cost basis)
+  // Sort: biggest absolute market value first (fallback: cost basis)
   out.sort((a, b) => {
     const amv = a.marketPrice != null ? a.marketPrice * a.quantity : a.costBasis;
     const bmv = b.marketPrice != null ? b.marketPrice * b.quantity : b.costBasis;
