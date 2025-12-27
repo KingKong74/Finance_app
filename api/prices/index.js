@@ -64,56 +64,55 @@ export default async function handler(req, res) {
     // 3) fetch live only if needed
     let live = {};
     if (toFetch.length) {
+      const now = new Date();
+
+      // (a) Try Twelve Data first — but don't let failure stop Yahoo fallback
       try {
-        const now = new Date();
-
-        // (a) Try Twelve Data for everything first
         const td = await fetchLivePrices(toFetch);
-
-        // td is keyed by symbol (usually)
         for (const [sym, item] of Object.entries(td || {})) {
           if (item?.price != null) live[sym] = item;
         }
+      } catch (e) {
+        console.error("Twelve Data failed (prices):", e?.message || e);
+      }
 
-        // (b) Auto-fallback: any missing symbols -> try Yahoo as ASX (.AX)
+      // (b) Fallback to Yahoo for anything still missing
+      try {
         const missing = toFetch.filter((s) => !live[s]?.price);
         if (missing.length) {
           const yahooSyms = missing.map((s) => `${s}.AX`);
           const yf = await fetchYahooPrices(yahooSyms);
 
-          // map REA.AX back to REA
           for (const [psym, item] of Object.entries(yf || {})) {
             const orig = psym.endsWith(".AX") ? psym.slice(0, -3) : psym;
-            if (item?.price != null) {
-              live[orig] = item; // store under original ticker
-            }
+            if (item?.price != null) live[orig] = item;
           }
         }
+      } catch (e) {
+        console.error("Yahoo failed (prices):", e?.message || e);
+      }
 
-        // Cache updates (single format regardless of provider)
-        const ops = Object.entries(live).map(([sym, item]) => ({
-          updateOne: {
-            filter: { symbol: sym },
-            update: {
-              $set: {
-                symbol: sym,
-                currency: item.currency || "USD",
-                price: Number(item.price),
-                source: item.source || "live",
-                asOf: item.asOf || now.toISOString(),
-                updatedAt: now,
-              },
+      // Cache whatever we managed to fetch (from either provider)
+      const ops = Object.entries(live).map(([sym, item]) => ({
+        updateOne: {
+          filter: { symbol: sym },
+          update: {
+            $set: {
+              symbol: sym,
+              currency: item.currency || "USD",
+              price: Number(item.price),
+              source: item.source || "live",
+              asOf: item.asOf || now.toISOString(),
+              updatedAt: now,
             },
-            upsert: true,
           },
-        }));
+          upsert: true,
+        },
+      }));
 
-        if (ops.length) await col.bulkWrite(ops);
-        } catch (e) {
-          console.error("Live fetch failed (prices):", e?.message || e);
-          // fallback to cache
-        }
+      if (ops.length) await col.bulkWrite(ops);
     }
+
 
     // 4) merge response
     const out = {};
