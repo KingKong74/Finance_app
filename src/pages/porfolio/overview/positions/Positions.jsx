@@ -11,7 +11,7 @@ const useLastTradeAsMarketPrice = true;
 export default function Positions() {
   const [rows, setRows] = useState([]);
   const [cashRows, setCashRows] = useState([]);
-  const [displayCurrency, setDisplayCurrency] = useState("AUD"); // "AUD" | "USD" | "EUR" | "MARKET"
+  const [displayCurrency, setDisplayCurrency] = useState("MARKET"); // "AUD" | "USD" | "EUR" | "MARKET"
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {

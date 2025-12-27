@@ -42,6 +42,11 @@ export function priceBadgeLabel(source, asOfIso) {
   else if (ageHrs < 24) ageLabel = `${Math.round(ageHrs)}h`;
   else ageLabel = `${Math.round(ageHrs / 24)}d`;
 
+  // EODHD prices are delayed but valid through the trading day
+  if (src.includes("EODHD")) {
+    return "DELAYED";
+  }
+
   const stale = ageHrs > STALE_AFTER_HOURS;
   return stale ? `${main} · STALE` : `${main} · ${ageLabel}`;
 }
