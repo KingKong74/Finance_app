@@ -1,14 +1,18 @@
 import React, { useEffect, useMemo, useState } from "react";
 import "../../../../css/positionsTab.css";
 
-// Replace later with live FX rates (API), but fine for now:
+/**
+ * FX rates (placeholder)
+ * Rates are "1 unit = rate AUD" (same style you used in Ledger)
+ */
 const EXCHANGE_RATES = { AUD: 1, USD: 1.65, EUR: 1.8 };
 
-// Optional: if you don't have market prices yet, we can:
-// - show "—" for Market Value / Unrealised
-// - or use last trade price as a placeholder (what I do below)
+/**
+ * If a live price can't be fetched, we fallback to last trade price.
+ */
 const useLastTradeAsMarketPrice = true;
 
+/** ---------- formatting helpers ---------- */
 const fmtMoney = (n, ccy = "AUD") => {
   const num = Number(n || 0);
   return num.toLocaleString(undefined, {
@@ -18,7 +22,7 @@ const fmtMoney = (n, ccy = "AUD") => {
   });
 };
 
-const fmtNum = (n, dp = 2) => {
+const fmtNum = (n, dp = 6) => {
   const num = Number(n || 0);
   return num.toLocaleString(undefined, { maximumFractionDigits: dp });
 };
@@ -27,15 +31,20 @@ const toBase = (value, from, to) => {
   const v = Number(value || 0);
   const rFrom = EXCHANGE_RATES[from] ?? 1;
   const rTo = EXCHANGE_RATES[to] ?? 1;
-  // rates are "1 unit = rate AUD" (like your ledger)
   return (v * rFrom) / rTo;
 };
 
 export default function Positions() {
   const [rows, setRows] = useState([]);
   const [cashRows, setCashRows] = useState([]);
-  const [displayCurrency, setDisplayCurrency] = useState("AUD"); // "AUD" | "USD" | "EUR" | "MARKET"
+
+  // "AUD" | "USD" | "EUR" | "MARKET"
+  const [displayCurrency, setDisplayCurrency] = useState("AUD");
+
   const [loading, setLoading] = useState(true);
+
+  // live prices by ticker: { AMZN: { price: 212.34, currency: "USD" } }
+  const [prices, setPrices] = useState({});
 
   useEffect(() => {
     const run = async () => {
@@ -73,7 +82,9 @@ export default function Positions() {
           }))
           .filter((t) => t.ticker && t.date);
 
-        normalised.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+        normalised.sort((a, b) =>
+          a.date < b.date ? -1 : a.date > b.date ? 1 : 0
+        );
 
         const positions = buildPositions(normalised);
 
@@ -87,10 +98,27 @@ export default function Positions() {
 
         setRows(positions);
         setCashRows(summariseCash(cashNormalised));
+
+        // Fetch live prices (US stocks) via your serverless /api/prices endpoint
+        // Only fetch for unique tickers
+        const symbols = Array.from(new Set(positions.map((p) => p.ticker))).filter(
+          Boolean
+        );
+
+        if (symbols.length) {
+          const rPrices = await fetch(
+            `/api/prices?symbols=${encodeURIComponent(symbols.join(","))}`
+          );
+          const pmap = rPrices.ok ? await rPrices.json() : {};
+          setPrices(pmap && typeof pmap === "object" ? pmap : {});
+        } else {
+          setPrices({});
+        }
       } catch (e) {
         console.error("Positions fetch failed:", e);
         setRows([]);
         setCashRows([]);
+        setPrices({});
       } finally {
         setLoading(false);
       }
@@ -100,36 +128,53 @@ export default function Positions() {
   }, []);
 
   const rowsWithDisplay = useMemo(() => {
-    const isMarket = displayCurrency === "MARKET";
-
     return rows.map((p) => {
-      const marketValue = p.marketPrice != null ? p.quantity * p.marketPrice : null;
-      const unrealised = marketValue != null ? marketValue - p.costBasis : null;
+      // live market price (if available)
+      const live = prices?.[p.ticker]?.price;
+      const livePrice =
+        Number.isFinite(Number(live)) && Number(live) > 0 ? Number(live) : null;
 
-      // If MARKET: do not convert — display in the instrument's own currency
+      // choose market price:
+      const marketPrice =
+        livePrice != null ? livePrice : useLastTradeAsMarketPrice ? p.marketPrice : null;
+
+      const marketValue =
+        marketPrice != null ? Number(p.quantity || 0) * Number(marketPrice) : null;
+
+      const unrealised =
+        marketValue != null ? marketValue - Number(p.costBasis || 0) : null;
+
+      // MARKET option: show values in the trade's currency
+      const targetCcy = displayCurrency === "MARKET" ? p.currency : displayCurrency;
+
       const mvDisplay =
-        marketValue == null ? null : isMarket ? marketValue : toBase(marketValue, p.currency, displayCurrency);
+        marketValue == null ? null : toBase(marketValue, p.currency, targetCcy);
 
-      const cbDisplay = isMarket ? p.costBasis : toBase(p.costBasis, p.currency, displayCurrency);
+      const cbDisplay = toBase(p.costBasis, p.currency, targetCcy);
 
       const upnlDisplay =
-        unrealised == null ? null : isMarket ? unrealised : toBase(unrealised, p.currency, displayCurrency);
+        unrealised == null ? null : toBase(unrealised, p.currency, targetCcy);
 
-      const avgDisplay =
-        p.avgPrice == null ? null : isMarket ? p.avgPrice : toBase(p.avgPrice, p.currency, displayCurrency);
+      const avgPriceDisplay =
+        p.avgPrice == null ? null : toBase(p.avgPrice, p.currency, targetCcy);
 
       return {
         ...p,
+        marketPrice,
         marketValue,
         unrealised,
+        targetCcy,
         mvDisplay,
         cbDisplay,
         upnlDisplay,
-        avgDisplay,
-        displayCcy: isMarket ? p.currency : displayCurrency, // per-row currency when Market
+        avgPriceDisplay,
+        hasLivePrice: livePrice != null,
       };
     });
-  }, [rows, displayCurrency]);
+  }, [rows, displayCurrency, prices]);
+
+  const plHeaderCcyLabel =
+    displayCurrency === "MARKET" ? "Market" : displayCurrency;
 
   return (
     <div className="positions-page">
@@ -139,8 +184,11 @@ export default function Positions() {
         <div className="positions-controls">
           <label className="currency-pill">
             P/L currency:&nbsp;
-            <select value={displayCurrency} onChange={(e) => setDisplayCurrency(e.target.value)}>
-              <option value="MARKET">Market</option>
+            <select
+              value={displayCurrency}
+              onChange={(e) => setDisplayCurrency(e.target.value)}
+            >
+              <option value="MARKET">Market currency</option>
               {Object.keys(EXCHANGE_RATES).map((c) => (
                 <option key={c} value={c}>
                   {c}
@@ -161,9 +209,7 @@ export default function Positions() {
                 <th className="num">Market Value</th>
                 <th className="num">Avg. Price</th>
                 <th className="num">Cost Basis</th>
-                <th className="num">
-                  Unrealised P&amp;L ({displayCurrency === "MARKET" ? "Market" : displayCurrency})
-                </th>
+                <th className="num">Unrealised P&amp;L ({plHeaderCcyLabel})</th>
               </tr>
             </thead>
 
@@ -183,7 +229,8 @@ export default function Positions() {
               ) : (
                 rowsWithDisplay.map((p) => {
                   const pnl = p.upnlDisplay;
-                  const pnlClass = pnl == null ? "" : pnl > 0 ? "pos" : pnl < 0 ? "neg" : "";
+                  const pnlClass =
+                    pnl == null ? "" : pnl > 0 ? "pos" : pnl < 0 ? "neg" : "";
 
                   return (
                     <tr key={`${p.ticker}_${p.currency}_${p.type}`}>
@@ -192,6 +239,7 @@ export default function Positions() {
                           <span className="instrument-ticker">{p.ticker}</span>
                           <span className="instrument-meta">
                             {p.type.toUpperCase()} · {p.currency}
+                            {p.hasLivePrice ? " · LIVE" : useLastTradeAsMarketPrice ? " · LAST" : ""}
                           </span>
                         </div>
                       </td>
@@ -199,17 +247,17 @@ export default function Positions() {
                       <td className="num">{fmtNum(p.quantity, 6)}</td>
 
                       <td className="num">
-                        {p.mvDisplay == null ? "—" : fmtMoney(p.mvDisplay, p.displayCcy)}
+                        {p.mvDisplay == null ? "—" : fmtMoney(p.mvDisplay, p.targetCcy)}
                       </td>
 
                       <td className="num">
-                        {p.avgDisplay == null ? "—" : fmtMoney(p.avgDisplay, p.displayCcy)}
+                        {p.avgPriceDisplay == null ? "—" : fmtMoney(p.avgPriceDisplay, p.targetCcy)}
                       </td>
 
-                      <td className="num">{fmtMoney(p.cbDisplay, p.displayCcy)}</td>
+                      <td className="num">{fmtMoney(p.cbDisplay, p.targetCcy)}</td>
 
                       <td className={`num ${pnlClass}`}>
-                        {p.upnlDisplay == null ? "—" : fmtMoney(p.upnlDisplay, p.displayCcy)}
+                        {pnl == null ? "—" : fmtMoney(pnl, p.targetCcy)}
                       </td>
                     </tr>
                   );
@@ -220,8 +268,10 @@ export default function Positions() {
         </div>
 
         <p className="positions-note">
-          Market price is currently {useLastTradeAsMarketPrice ? "last trade price (placeholder)" : "not set"}.
-          When you’re ready, we’ll plug live prices in and Unrealised P/L becomes “real”.
+          Market price uses{" "}
+          {Object.keys(prices || {}).length ? "live quotes (when available)" : "no live quotes yet"}.
+          If a quote can’t be found, it falls back to{" "}
+          {useLastTradeAsMarketPrice ? "last trade price" : "—"}.
         </p>
       </div>
 
@@ -234,9 +284,7 @@ export default function Positions() {
               <tr>
                 <th>Currency</th>
                 <th className="num">Balance</th>
-                <th className="num">
-                  Balance ({displayCurrency === "MARKET" ? "Market" : displayCurrency})
-                </th>
+                <th className="num">Balance ({plHeaderCcyLabel})</th>
               </tr>
             </thead>
             <tbody>
@@ -253,17 +301,20 @@ export default function Positions() {
                   </td>
                 </tr>
               ) : (
-                cashRows.map((c) => (
-                  <tr key={c.currency}>
-                    <td>{c.currency}</td>
-                    <td className="num">{fmtMoney(c.balance, c.currency)}</td>
-                    <td className="num">
-                      {displayCurrency === "MARKET"
-                        ? "—"
-                        : fmtMoney(toBase(c.balance, c.currency, displayCurrency), displayCurrency)}
-                    </td>
-                  </tr>
-                ))
+                cashRows.map((c) => {
+                  const targetCcy =
+                    displayCurrency === "MARKET" ? c.currency : displayCurrency;
+
+                  return (
+                    <tr key={c.currency}>
+                      <td>{c.currency}</td>
+                      <td className="num">{fmtMoney(c.balance, c.currency)}</td>
+                      <td className="num">
+                        {fmtMoney(toBase(c.balance, c.currency, targetCcy), targetCcy)}
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -277,7 +328,7 @@ export default function Positions() {
  * Build open positions using average cost method.
  * - Quantity can be negative (short). We'll still compute avg price + cost basis.
  * - Cost basis is tracked as total cost of the open position.
- * - Market price uses last trade price as placeholder (easy upgrade later).
+ * - Market price falls back to last trade price (easy upgrade later).
  */
 function buildPositions(trades) {
   // key: ticker|currency|type
@@ -306,15 +357,11 @@ function buildPositions(trades) {
       p.lastDate = t.date;
     }
 
-    // Average-cost position tracking:
-    // Buy: quantity > 0 increases position and cost basis
-    // Sell: quantity < 0 reduces position and reduces cost basis proportionally
-    // NOTE: IBKR sells come in as negative qty already (good)
-    const q = t.quantity;
-    const px = t.price;
-    const fee = t.fee;
+    const q = Number(t.quantity || 0);
+    const px = Number(t.price || 0);
+    const fee = Number(t.fee || 0);
 
-    // If buy (q > 0): cost increases by (q*px + fee)
+    // Buy (q > 0): cost increases by (q*px + fee)
     if (q > 0) {
       const newQty = p.quantity + q;
       const newCost = p.costBasis + q * px + fee;
@@ -325,19 +372,17 @@ function buildPositions(trades) {
       continue;
     }
 
-    // If sell (q < 0): reduce qty; reduce cost basis by avgCost * abs(q)
+    // Sell (q < 0): reduce qty; reduce cost basis by avgCost * abs(q)
     if (q < 0) {
       const sellQty = Math.abs(q);
 
-      // If we have no position (or crossing through zero), keep it simple:
-      // We’ll apply avg-cost on current side, and allow going negative.
+      // If no position yet (or weird crossing), use current avg if possible, else trade price
       const currentAvg = p.quantity !== 0 ? p.costBasis / p.quantity : px;
 
       const newQty = p.quantity - sellQty;
       const reduceCost = currentAvg * sellQty;
 
       // Fee on sell: treat as extra cost (reduces proceeds), so add fee to cost basis
-      // (this keeps P/L consistent later when we implement realised properly)
       const newCost = p.costBasis - reduceCost + fee;
 
       p.quantity = newQty;
