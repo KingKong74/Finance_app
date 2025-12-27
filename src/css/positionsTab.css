@@ -161,6 +161,11 @@
   color: #ef6c00;
 }
 
+.price-badge.delayed {
+  background: #fff3e0;
+  color: #eb4e15aa;
+}
+
 .price-badge.last {
   background: #e3f2fd;
   color: #1565c0;

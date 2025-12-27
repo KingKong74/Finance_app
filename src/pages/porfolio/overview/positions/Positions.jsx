@@ -238,6 +238,8 @@ export default function Positions() {
                                   ? "live"
                                   : badge.includes("CACHED")
                                   ? "cached"
+                                  : badge.includes("DELAYED")
+                                  ? "delayed" 
                                   : "last"
                               }`}
                             >

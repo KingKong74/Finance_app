@@ -23,26 +23,26 @@ export function priceBadgeLabel(source, asOfIso) {
   const src = String(source || "").toUpperCase();
   const ageHrs = hoursSince(asOfIso);
 
+  // Provider-specific labels
+  if (src.includes("YAHOO")) {
+    // Yahoo Finance quotes are often delayed for many exchanges
+    return "DELAYED";
+  }
+
   let main = "LAST";
   if (src.includes("LIVE")) main = "LIVE";
   else if (src.includes("CACHE")) main = "CACHED";
   else if (src) main = src;
 
-  // LIVE prices don’t need age labels
   if (main === "LIVE") return "LIVE";
-
   if (ageHrs == null) return main;
 
-  // Human-friendly age
   let ageLabel = "";
-  if (ageHrs < 1) {
-    ageLabel = `${Math.max(1, Math.round(ageHrs * 60))}m`;
-  } else if (ageHrs < 24) {
-    ageLabel = `${Math.round(ageHrs)}h`;
-  } else {
-    ageLabel = `${Math.round(ageHrs / 24)}d`;
-  }
+  if (ageHrs < 1) ageLabel = `${Math.max(1, Math.round(ageHrs * 60))}m`;
+  else if (ageHrs < 24) ageLabel = `${Math.round(ageHrs)}h`;
+  else ageLabel = `${Math.round(ageHrs / 24)}d`;
 
   const stale = ageHrs > STALE_AFTER_HOURS;
   return stale ? `${main} · STALE` : `${main} · ${ageLabel}`;
 }
+

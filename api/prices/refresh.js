@@ -1,6 +1,8 @@
 // /api/prices/refresh.js
 import { connectToDB } from "../utils/db.js";
-import { fetchLivePricesChunked} from "../utils/twelveData.js";
+import { fetchLivePricesChunked } from "../utils/twelveData.js";
+import { fetchYahooPrices } from "../utils/yahooFinance.js";
+
 
 
 const TRADES_COLLECTION = "trades";
@@ -52,11 +54,24 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, refreshed: 0, symbols: [] });
     }
 
-    // 2) Fetch live prices in one go (provider permitting)
-    const live = await fetchLivePricesChunked(symbols);
+    // 2) Fetch live prices
+    const now = new Date();
+
+    const ASX = symbols.filter((s) => s.endsWith(".AX"));
+    const NON_ASX = symbols.filter((s) => !s.endsWith(".AX"));
+
+    const live = {};
+
+    if (NON_ASX.length) {
+      Object.assign(live, await fetchLivePricesChunked(NON_ASX));
+    }
+
+    if (ASX.length) {
+      Object.assign(live, await fetchYahooPrices(ASX));
+    }
+
 
     // 3) Upsert cache
-    const now = new Date();
     const ops = symbols
       .map((sym) => {
         const item = live?.[sym];
