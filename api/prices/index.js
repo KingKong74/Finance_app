@@ -1,7 +1,7 @@
 // /api/prices/index.js
 import { connectToDB } from "../utils/db.js";
 import { fetchLivePrices } from "../utils/twelveData.js";
-import { fetchYahooPrices } from "../utils/yahooFinance.js";
+import { fetchEodhdLivePrices } from "../utils/eodhd.js";
 
 const CACHE_COLLECTION = "prices";
 const DEFAULT_TTL_MINUTES = 60;
@@ -36,7 +36,6 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "symbols is required" });
     }
 
-    // ⛔ hard limit to prevent abuse / rate-limit exhaustion
     if (symbols.length > MAX_SYMBOLS) {
       return res.status(400).json({
         error: `Too many symbols requested (max ${MAX_SYMBOLS})`,
@@ -61,12 +60,12 @@ export default async function handler(req, res) {
           return !c || !isFresh(c.updatedAt, ttl);
         });
 
-    // 3) fetch live only if needed
+    // 3) fetch live only if needed (Twelve Data first, then EODHD for misses)
     let live = {};
     if (toFetch.length) {
       const now = new Date();
 
-      // (a) Try Twelve Data first — but don't let failure stop Yahoo fallback
+      // (a) Twelve Data attempt
       try {
         const td = await fetchLivePrices(toFetch);
         for (const [sym, item] of Object.entries(td || {})) {
@@ -76,23 +75,20 @@ export default async function handler(req, res) {
         console.error("Twelve Data failed (prices):", e?.message || e);
       }
 
-      // (b) Fallback to Yahoo for anything still missing
+      // (b) EODHD fallback for anything still missing
       try {
         const missing = toFetch.filter((s) => !live[s]?.price);
         if (missing.length) {
-          const yahooSyms = missing.map((s) => `${s}.AX`);
-          const yf = await fetchYahooPrices(yahooSyms);
-
-          for (const [psym, item] of Object.entries(yf || {})) {
-            const orig = psym.endsWith(".AX") ? psym.slice(0, -3) : psym;
-            if (item?.price != null) live[orig] = item;
+          const eod = await fetchEodhdLivePrices(missing, "AU"); // ASX as default fallback
+          for (const [sym, item] of Object.entries(eod || {})) {
+            if (item?.price != null) live[sym] = item;
           }
         }
       } catch (e) {
-        console.error("Yahoo failed (prices):", e?.message || e);
+        console.error("EODHD failed (prices):", e?.message || e);
       }
 
-      // Cache whatever we managed to fetch (from either provider)
+      // Cache whatever we got (from either provider)
       const ops = Object.entries(live).map(([sym, item]) => ({
         updateOne: {
           filter: { symbol: sym },
@@ -112,7 +108,6 @@ export default async function handler(req, res) {
 
       if (ops.length) await col.bulkWrite(ops);
     }
-
 
     // 4) merge response
     const out = {};

@@ -1,18 +1,13 @@
 // /api/prices/refresh.js
 import { connectToDB } from "../utils/db.js";
-import { fetchLivePricesChunked } from "../utils/twelveData.js";
-import { fetchYahooPrices } from "../utils/yahooFinance.js";
-
-
+import { fetchLivePrices } from "../utils/twelveData.js";
+import { fetchEodhdLivePrices } from "../utils/eodhd.js";
 
 const TRADES_COLLECTION = "trades";
 const PRICES_COLLECTION = "prices";
 
-
 export default async function handler(req, res) {
   try {
-    // Optional: basic protection so randoms can't hammer this endpoint
-    // Set CRON_SECRET in Vercel env and call with ?secret=...
     const secret = process.env.CRON_SECRET;
     if (secret && req.query.secret !== secret) {
       return res.status(401).json({ error: "Unauthorised" });
@@ -27,74 +22,63 @@ export default async function handler(req, res) {
       { $match: { type: { $in: ["trades", "crypto", "forex"] } } },
       {
         $group: {
-          _id: {
-            ticker: "$ticker",
-            currency: "$currency",
-            type: "$type",
-          },
+          _id: { ticker: "$ticker" },
           netQty: { $sum: "$quantity" },
         },
       },
-      {
-        $match: {
-          netQty: { $ne: 0 },
-        },
-      },
-      {
-        $group: {
-          _id: "$_id.ticker",
-        },
-      },
+      { $match: { netQty: { $ne: 0 } } },
     ];
 
     const held = await tradesCol.aggregate(pipeline).toArray();
-    const symbols = held.map((x) => String(x._id || "").toUpperCase()).filter(Boolean);
+    const symbols = held.map((x) => String(x._id?.ticker || "").toUpperCase()).filter(Boolean);
 
-    if (symbols.length === 0) {
+    if (!symbols.length) {
       return res.status(200).json({ ok: true, refreshed: 0, symbols: [] });
     }
 
-    // 2) Fetch live prices
     const now = new Date();
 
-    const ASX = symbols.filter((s) => s.endsWith(".AX"));
-    const NON_ASX = symbols.filter((s) => !s.endsWith(".AX"));
-
-    const live = {};
-
-    if (NON_ASX.length) {
-      Object.assign(live, await fetchLivePricesChunked(NON_ASX));
+    // 2) Try Twelve Data first
+    let live = {};
+    try {
+      const td = await fetchLivePrices(symbols);
+      for (const [sym, item] of Object.entries(td || {})) {
+        if (item?.price != null) live[sym] = item;
+      }
+    } catch (e) {
+      console.error("Twelve Data failed (refresh):", e?.message || e);
     }
 
-    if (ASX.length) {
-      Object.assign(live, await fetchYahooPrices(ASX));
+    // 3) EODHD fallback for missing
+    try {
+      const missing = symbols.filter((s) => !live[s]?.price);
+      if (missing.length) {
+        const eod = await fetchEodhdLivePrices(missing, "AU");
+        for (const [sym, item] of Object.entries(eod || {})) {
+          if (item?.price != null) live[sym] = item;
+        }
+      }
+    } catch (e) {
+      console.error("EODHD failed (refresh):", e?.message || e);
     }
 
-
-    // 3) Upsert cache
-    const ops = symbols
-      .map((sym) => {
-        const item = live?.[sym];
-        if (!item?.price) return null;
-
-        return {
-          updateOne: {
-            filter: { symbol: sym },
-            update: {
-              $set: {
-                symbol: sym,
-                currency: item.currency || "USD",
-                price: Number(item.price),
-                source: item.source || "live",
-                asOf: item.asOf || now.toISOString(),
-                updatedAt: now,
-              },
-            },
-            upsert: true,
+    // 4) Upsert cache
+    const ops = Object.entries(live).map(([sym, item]) => ({
+      updateOne: {
+        filter: { symbol: sym },
+        update: {
+          $set: {
+            symbol: sym,
+            currency: item.currency || "USD",
+            price: Number(item.price),
+            source: item.source || "live",
+            asOf: item.asOf || now.toISOString(),
+            updatedAt: now,
           },
-        };
-      })
-      .filter(Boolean);
+        },
+        upsert: true,
+      },
+    }));
 
     if (ops.length) await pricesCol.bulkWrite(ops);
 
@@ -102,6 +86,7 @@ export default async function handler(req, res) {
       ok: true,
       refreshed: ops.length,
       symbolsCount: symbols.length,
+      missingAfter: symbols.filter((s) => !live[s]?.price),
     });
   } catch (err) {
     console.error("Prices refresh error:", err);
