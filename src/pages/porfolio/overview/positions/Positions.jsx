@@ -71,7 +71,7 @@ export default function Positions() {
         let priceMap = {};
         if (symbols.length > 0) {
           const rPrices = await fetch(
-            `/api/prices?symbols=${symbols.join(",")}`
+            `/api/prices?symbols=${symbols.join(",")}&ttl=60`
           );
           const data = rPrices.ok ? await safeJson(rPrices) : null;
           priceMap = data && typeof data === "object" ? data : {};

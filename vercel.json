@@ -2,5 +2,12 @@
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/(.*)", "destination": "/" }
+  ],
+  "crons": [
+    {
+      "path": "/api/prices/refresh?secret=@cron_secret",
+      "schedule": "10 6 * * 1-5"
+    }
   ]
 }
+

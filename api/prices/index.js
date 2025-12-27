@@ -1,139 +1,78 @@
 // /api/prices/index.js
-import { connectToDB } from "../utils/db.js";
 
-const CACHE_COLLECTION = "prices";
-
-// helper: parse symbols param
-function parseSymbols(q) {
-  const raw = String(q || "")
-    .split(",")
-    .map((s) => s.trim().toUpperCase())
-    .filter(Boolean);
-
-  // de-dupe
-  return Array.from(new Set(raw));
-}
-
-// TODO: replace this with your actual provider fetch.
-// Keep it server-side (never expose api key to frontend).
 async function fetchLivePrices(symbols) {
-  // Return: { ASML: { price: 123, currency: "USD" }, ... }
-  // Throw if provider fails.
-  // For now, pretend it fails so you see fallback behaviour:
-  throw new Error("Live provider not wired yet");
-}
+  const apiKey = process.env.TWELVE_DATA_API_KEY;
+  if (!apiKey) throw new Error("Missing TWELVE_DATA_API_KEY");
 
-export default async function handler(req, res) {
-  try {
-    const db = await connectToDB();
-    const col = db.collection(CACHE_COLLECTION);
+  // Twelve Data batch: symbol=AAPL,MSFT,EUR/USD,BTC/USD  :contentReference[oaicite:1]{index=1}
+  const qs = new URLSearchParams({
+    symbol: symbols.join(","),
+    apikey: apiKey,
+  });
 
-    if (req.method === "GET") {
-      const symbols = parseSymbols(req.query.symbols);
-      if (symbols.length === 0) {
-        return res.status(400).json({ error: "symbols is required" });
-      }
+  // quote gives currency + more fields (price endpoint is lighter but less metadata)
+  const url = `https://api.twelvedata.com/quote?${qs.toString()}`;
 
-      // 1) try live
-      let live = null;
-      try {
-        live = await fetchLivePrices(symbols);
+  const r = await fetch(url, {
+    headers: { "accept": "application/json" },
+  });
 
-        // If live succeeded, upsert cache
-        const now = new Date();
-        const ops = symbols.map((sym) => {
-          const item = live?.[sym];
-          if (!item?.price) return null;
-
-          return {
-            updateOne: {
-              filter: { symbol: sym },
-              update: {
-                $set: {
-                  symbol: sym,
-                  currency: item.currency || "USD",
-                  price: Number(item.price),
-                  source: item.source || "live",
-                  asOf: item.asOf || now.toISOString(),
-                  updatedAt: now,
-                },
-              },
-              upsert: true,
-            },
-          };
-        }).filter(Boolean);
-
-        if (ops.length) await col.bulkWrite(ops);
-
-      } catch (e) {
-        // swallow live error -> fallback to cache
-        live = null;
-      }
-
-      // 2) read cache for all symbols
-      const cachedRows = await col.find({ symbol: { $in: symbols } }).toArray();
-      const cachedMap = Object.fromEntries(
-        cachedRows.map((r) => [
-          r.symbol,
-          {
-            price: Number(r.price),
-            currency: r.currency || "USD",
-            asOf: r.asOf || (r.updatedAt ? new Date(r.updatedAt).toISOString() : null),
-            source: r.source || "cache",
-          },
-        ])
-      );
-
-      // 3) merge: live wins, else cache, else null
-      const out = {};
-      for (const sym of symbols) {
-        const l = live?.[sym];
-        if (l?.price != null) {
-          out[sym] = {
-            price: Number(l.price),
-            currency: l.currency || "USD",
-            asOf: l.asOf || new Date().toISOString(),
-            source: l.source || "live",
-          };
-        } else if (cachedMap[sym]) {
-          out[sym] = cachedMap[sym];
-        } else {
-          out[sym] = null;
-        }
-      }
-
-      return res.status(200).json(out);
-    }
-
-    // Optional: allow manual cache updates
-    if (req.method === "POST") {
-      const payload = req.body || {};
-      const symbol = String(payload.symbol || "").toUpperCase();
-      if (!symbol) return res.status(400).json({ error: "symbol is required" });
-
-      const now = new Date();
-      await col.updateOne(
-        { symbol },
-        {
-          $set: {
-            symbol,
-            currency: payload.currency || "USD",
-            price: Number(payload.price),
-            source: payload.source || "manual",
-            asOf: payload.asOf || now.toISOString(),
-            updatedAt: now,
-          },
-        },
-        { upsert: true }
-      );
-
-      return res.status(200).json({ success: true });
-    }
-
-    res.setHeader("Allow", ["GET", "POST"]);
-    return res.status(405).end(`Method ${req.method} Not Allowed`);
-  } catch (err) {
-    console.error("Prices API error:", err);
-    return res.status(500).json({ error: "Server error" });
+  // If you hit limits you may see 4xx or an "error" JSON
+  const data = await r.json().catch(() => null);
+  if (!r.ok || !data) {
+    throw new Error(`Twelve Data HTTP error: ${r.status}`);
   }
+
+  // If API returns a top-level error object
+  if (data.status === "error") {
+    throw new Error(data.message || "Twelve Data error");
+  }
+
+  // Normalise both possible shapes:
+  // 1) single symbol => { symbol:"AAPL", currency:"USD", close:"...", ... }
+  // 2) batch => { AAPL: {...}, MSFT: {...} } (common for batch JSON)
+  const out = {};
+
+  const normaliseOne = (obj) => {
+    if (!obj) return null;
+    if (obj.status === "error") return null;
+
+    // Twelve Data commonly uses "close" as the latest price in quote
+    // but we defensively try a few.
+    const rawPrice =
+      obj.price ?? obj.close ?? obj.last ?? obj.regularMarketPrice ?? null;
+
+    const priceNum = rawPrice == null ? null : Number(rawPrice);
+    if (priceNum == null || Number.isNaN(priceNum)) return null;
+
+    return {
+      price: priceNum,
+      currency: obj.currency || "USD",
+      // Quote often includes datetime; fall back to now if missing
+      asOf: obj.datetime || obj.timestamp || new Date().toISOString(),
+      source: "twelvedata-live",
+    };
+  };
+
+  // batch response: keys are symbols
+  const looksBatch =
+    typeof data === "object" &&
+    !Array.isArray(data) &&
+    !("symbol" in data) &&
+    symbols.some((s) => Object.prototype.hasOwnProperty.call(data, s));
+
+  if (looksBatch) {
+    for (const sym of symbols) {
+      const item = normaliseOne(data[sym]);
+      if (item) out[sym] = item;
+    }
+    return out;
+  }
+
+  // single response
+  const sym = String(data.symbol || symbols[0] || "").toUpperCase();
+  const item = normaliseOne(data);
+  if (sym && item) out[sym] = item;
+
+  return out;
 }
