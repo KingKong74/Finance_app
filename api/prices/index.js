@@ -76,7 +76,7 @@ export default async function handler(req, res) {
         }
 
         // (b) Auto-fallback: any missing symbols -> try Yahoo as ASX (.AX)
-        const missing = toFetch.filter((s) => !live[s]);
+        const missing = toFetch.filter((s) => !live[s]?.price);
         if (missing.length) {
           const yahooSyms = missing.map((s) => `${s}.AX`);
           const yf = await fetchYahooPrices(yahooSyms);
