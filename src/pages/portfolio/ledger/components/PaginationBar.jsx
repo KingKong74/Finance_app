@@ -18,7 +18,7 @@ export default function PaginationBar({
             setCurrentPage(1);
           }}
         >
-          {[25, 50, 100, 500, 1000].map((n) => (
+          {[5, 10, 25, 50, 100, 1000].map((n) => (
             <option key={n} value={n}>
               {n}
             </option>
