@@ -114,10 +114,33 @@ export default function ImportModal({ onClose, onImported }) {
     return c;
   }, [rows]);
 
-  const visibleRows = useMemo(() => {
-    if (filterTab === "all") return rows;
-    return rows.filter((r) => r.tab === filterTab);
-  }, [rows, filterTab]);
+const visibleRows = useMemo(() => {
+  const base = filterTab === "all" ? rows : rows.filter((r) => r.tab === filterTab);
+
+  const rank = (r) => {
+    // lower = higher priority
+    if (r.needsReview) return 0;     // FIX
+    if (r.dup) return 1;             // DUP
+    if (selected[r._tempId]) return 2; // Selected
+    return 3;                        // Unselected / other
+  };
+
+  return [...base].sort((a, b) => {
+    const ra = rank(a);
+    const rb = rank(b);
+    if (ra !== rb) return ra - rb;
+
+    // tie-breaker: newest first
+    const da = String(a.date || "");
+    const db = String(b.date || "");
+    if (da < db) return 1;
+    if (da > db) return -1;
+
+    // final tie-breaker: stable by tempId
+    return String(a._tempId).localeCompare(String(b._tempId));
+    });
+  }, [rows, filterTab, selected]);
+
 
   const toggleAllVisible = (val) => {
     setSelected((prev) => {
