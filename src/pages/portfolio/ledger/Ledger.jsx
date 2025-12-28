@@ -21,7 +21,7 @@ export default function Ledger() {
   const [activeTab, setActiveTab] = useState("trades");
 
   // NOTE: now used as "groups per page" (not rows)
-  const [rowLimit, setRowLimit] = useState(25);
+  const [rowLimit, setRowLimit] = useState(1);
 
   const [collapsed, setCollapsed] = useState({});
   const [baseCurrency, setBaseCurrency] = useState("AUD");
