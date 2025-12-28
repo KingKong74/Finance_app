@@ -3,12 +3,7 @@ import "../../../css/ledgerTab.css";
 import ImportModal from "./components/ImportModal.jsx";
 
 import { useLedgerData } from "./hooks/useLedgerData";
-import {
-  applySort,
-  calcGrandTotalInBase,
-  calcTotalsByCurrency,
-  groupRows,
-} from "./utils/ledgerMath";
+import { applySort, calcGrandTotalInBase, calcTotalsByCurrency, groupRows } from "./utils/ledgerMath";
 import { safeUpper } from "./utils/ledgerNormalise";
 
 import LedgerTabs from "./components/LedgerTabs";
@@ -36,7 +31,7 @@ export default function Ledger() {
   // Sorting
   const [sortConfig, setSortConfig] = useState({ key: "", direction: "asc" });
 
-  // Pagination (global across expanded rows)
+  // Pagination
   const [currentPage, setCurrentPage] = useState(1);
 
   const [newEntry, setNewEntry] = useState({
@@ -73,33 +68,24 @@ export default function Ledger() {
 
   const handleSort = (key) => {
     setSortConfig((prev) => {
-      const direction =
-        prev.key === key && prev.direction === "asc" ? "desc" : "asc";
+      const direction = prev.key === key && prev.direction === "asc" ? "desc" : "asc";
       return { key, direction };
     });
   };
 
   const sortArrow = (key) =>
-    sortConfig.key === key
-      ? sortConfig.direction === "asc"
-        ? "↑"
-        : "↓"
-      : "";
+    sortConfig.key === key ? (sortConfig.direction === "asc" ? "↑" : "↓") : "";
 
   const filteredAndSorted = useMemo(() => {
     const f = filters;
 
     let out = entries.filter((r) => {
       if (activeTab === "cash") {
-        return (
-          (!f.date || String(r.date) === f.date) &&
-          (!f.currency || r.currency === f.currency)
-        );
+        return (!f.date || String(r.date) === f.date) && (!f.currency || r.currency === f.currency);
       }
 
       return (
-        (!f.ticker ||
-          safeUpper(r.ticker).includes(safeUpper(f.ticker))) &&
+        (!f.ticker || safeUpper(r.ticker).includes(safeUpper(f.ticker))) &&
         (!f.date || String(r.date) === f.date) &&
         (!f.qty || Number(r.quantity) === Number(f.qty)) &&
         (!f.broker || r.broker === f.broker) &&
@@ -111,52 +97,16 @@ export default function Ledger() {
     return out;
   }, [entries, filters, sortConfig, activeTab]);
 
-  const grouped = useMemo(
-    () => groupRows(filteredAndSorted, activeTab),
-    [filteredAndSorted, activeTab]
-  );
-
-  const totalsByCurrency = useMemo(
-    () => calcTotalsByCurrency(grouped, activeTab),
-    [grouped, activeTab]
-  );
-
+  const grouped = useMemo(() => groupRows(filteredAndSorted, activeTab), [filteredAndSorted, activeTab]);
+  const totalsByCurrency = useMemo(() => calcTotalsByCurrency(grouped, activeTab), [grouped, activeTab]);
   const grandTotalInBase = useMemo(
     () => calcGrandTotalInBase(totalsByCurrency, baseCurrency),
     [totalsByCurrency, baseCurrency]
   );
 
-  // --- Option A global paging across expanded detail rows ---
-  const groupEntries = useMemo(() => Object.entries(grouped), [grouped]);
+  const totalPages = Math.max(1, Math.ceil(filteredAndSorted.length / rowLimit));
 
-  const expandedFlatRows = useMemo(() => {
-    const out = [];
-    for (const [key, rows] of groupEntries) {
-      if (collapsed[key]) continue;
-      for (const r of rows) out.push({ groupKey: key, row: r });
-    }
-    return out;
-  }, [groupEntries, collapsed]);
-
-  const totalPages = Math.max(1, Math.ceil(expandedFlatRows.length / rowLimit));
-
-  const pageRowsByGroup = useMemo(() => {
-    const start = (currentPage - 1) * rowLimit;
-    const end = start + rowLimit;
-
-    const slice = expandedFlatRows.slice(start, end);
-
-    const map = {};
-    for (const item of slice) {
-      (map[item.groupKey] ||= []).push(item.row);
-    }
-    return map;
-  }, [expandedFlatRows, currentPage, rowLimit]);
-
-  const toggleRow = (key) => {
-    setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
-    setCurrentPage(1);
-  };
+  const toggleRow = (key) => setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
 
   const onAdd = async () => {
     try {
@@ -198,10 +148,11 @@ export default function Ledger() {
 
       <LedgerTable
         activeTab={activeTab}
-        groupEntries={groupEntries}
+        grouped={grouped}
         collapsed={collapsed}
         toggleRow={toggleRow}
-        pageRowsByGroup={pageRowsByGroup}
+        currentPage={currentPage}
+        rowLimit={rowLimit}
         deleteEntry={deleteEntry}
         filters={filters}
         setFilters={setFilters}

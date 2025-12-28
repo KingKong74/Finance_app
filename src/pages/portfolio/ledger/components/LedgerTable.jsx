@@ -2,10 +2,11 @@ import React from "react";
 
 export default function LedgerTable({
   activeTab,
-  groupEntries,            // <-- NEW: ordered Object.entries(grouped)
+  grouped,
   collapsed,
   toggleRow,
-  pageRowsByGroup,         // <-- NEW: { [groupKey]: rowsOnThisPage[] }
+  currentPage,
+  rowLimit,
   deleteEntry,
   filters,
   setFilters,
@@ -139,7 +140,7 @@ export default function LedgerTable({
       </thead>
 
       <tbody>
-        {groupEntries.map(([key, rows]) => {
+        {Object.entries(grouped).map(([key, rows]) => {
           const currency = rows[0]?.currency || "";
 
           const subtotal = rows.reduce(
@@ -152,6 +153,7 @@ export default function LedgerTable({
                   realisedPL: 0,
                 };
               }
+
               return {
                 qty: a.qty + (r.quantity || 0),
                 proceeds: a.proceeds + (r.proceeds || 0),
@@ -162,16 +164,12 @@ export default function LedgerTable({
             { qty: 0, proceeds: 0, fee: 0, realisedPL: 0 }
           );
 
-          const isCollapsed = !!collapsed[key];
-          const rowsOnThisPage = pageRowsByGroup[key] || [];
-
           return (
             <React.Fragment key={key}>
-              {/* Subtotal row always visible */}
               <tr className="ledger-subtotal" onClick={() => toggleRow(key)}>
                 {activeTab !== "cash" && (
                   <td>
-                    <strong>{rows[0]?.ticker}</strong>
+                    <strong>{rows[0].ticker}</strong>
                   </td>
                 )}
 
@@ -196,49 +194,55 @@ export default function LedgerTable({
                 {activeTab !== "cash" && <td></td>}
 
                 <td>{currency}</td>
-                <td>{isCollapsed ? "▼" : "▲"}</td>
+                <td>{collapsed[key] ? "▼" : "▲"}</td>
               </tr>
 
-              {/* Detail rows: only if expanded AND only the global page slice */}
-              {!isCollapsed &&
-                rowsOnThisPage.map((r) => (
-                  <tr key={r._id}>
-                    {activeTab !== "cash" && <td>{r.ticker}</td>}
-                    <td>{r.date}</td>
-                    {activeTab !== "cash" && <td>{r.quantity}</td>}
-                    {activeTab !== "cash" && <td>{r.price}</td>}
+              {!collapsed[key] &&
+                rows
+                  .slice((currentPage - 1) * rowLimit, currentPage * rowLimit)
+                  .map((r) => (
+                    <tr key={r._id}>
+                      {activeTab !== "cash" && <td>{r.ticker}</td>}
+                      <td>{r.date}</td>
+                      {activeTab !== "cash" && <td>{r.quantity}</td>}
+                      {activeTab !== "cash" && <td>{r.price}</td>}
 
-                    <td>
-                      {activeTab === "cash"
-                        ? Number(r.amount || 0).toFixed(2)
-                        : Number(r.proceeds || 0).toFixed(2)}
-                    </td>
-
-                    {activeTab !== "cash" && (
-                      <td>{Number(r.fee || 0).toFixed(2)}</td>
-                    )}
-
-                    {activeTab !== "cash" && (
-                      <td>{Number(r.realisedPL || 0).toFixed(2)}</td>
-                    )}
-
-                    {activeTab !== "cash" && (
                       <td>
-                        <span className={`broker-tag ${String(r.broker || "").toLowerCase()}`}>
-                          {r.broker}
-                        </span>
+                        {activeTab === "cash"
+                          ? Number(r.amount || 0).toFixed(2)
+                          : Number(r.proceeds || 0).toFixed(2)}
                       </td>
-                    )}
 
-                    <td>{r.currency}</td>
+                      {activeTab !== "cash" && (
+                        <td>{Number(r.fee || 0).toFixed(2)}</td>
+                      )}
 
-                    <td>
-                      <button className="icon-btn" onClick={() => deleteEntry(r._id)}>
-                        ✕
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                      {activeTab !== "cash" && (
+                        <td>{Number(r.realisedPL || 0).toFixed(2)}</td>
+                      )}
+
+                      {activeTab !== "cash" && (
+                        <td>
+                          <span
+                            className={`broker-tag ${String(r.broker || "").toLowerCase()}`}
+                          >
+                            {r.broker}
+                          </span>
+                        </td>
+                      )}
+
+                      <td>{r.currency}</td>
+
+                      <td>
+                        <button
+                          className="icon-btn"
+                          onClick={() => deleteEntry(r._id)}
+                        >
+                          ✕
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
             </React.Fragment>
           );
         })}
