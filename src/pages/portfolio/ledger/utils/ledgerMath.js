@@ -32,27 +32,57 @@ export function applySort(out, sortConfig, activeTab) {
 }
 
 export function groupRows(rows, activeTab) {
+  const isCash = activeTab === "cash";
+  const isDividends = activeTab === "dividends";
+
   return rows.reduce((acc, r) => {
-    const key = activeTab === "cash" ? r.currency : `${r.ticker}_${r.currency}`;
+    // cash grouped by currency (as before)
+    if (isCash) {
+      const key = r.currency || "AUD";
+      (acc[key] ||= []).push(r);
+      return acc;
+    }
+
+    // dividends: group by ticker + currency
+    if (isDividends) {
+      const ticker = String(r.ticker || "").toUpperCase() || "—";
+      const cur = r.currency || "USD";
+      const key = `${ticker}_${cur}`;
+      (acc[key] ||= []).push(r);
+      return acc;
+    }
+
+    // trades/forex/crypto: group by ticker + currency
+    const ticker = String(r.ticker || "").toUpperCase();
+    const cur = r.currency || "USD";
+    const key = `${ticker}_${cur}`;
     (acc[key] ||= []).push(r);
     return acc;
   }, {});
 }
 
 export function calcTotalsByCurrency(grouped, activeTab) {
+  const isCashLike = activeTab === "cash" || activeTab === "dividends";
+
   return Object.values(grouped).reduce((acc, rows) => {
     const currency = rows[0]?.currency || "AUD";
 
     const subtotal = rows.reduce(
       (a, r) => {
-        if (activeTab === "cash") {
-          return { qty: 0, proceeds: a.proceeds + (r.amount || 0), fee: 0, realisedPL: 0 };
+        if (isCashLike) {
+          return {
+            qty: 0,
+            proceeds: a.proceeds + Number(r.amount || 0), // amount-based
+            fee: 0,
+            realisedPL: 0,
+          };
         }
+
         return {
-          qty: a.qty + (r.quantity || 0),
-          proceeds: a.proceeds + (r.proceeds || 0),
-          fee: a.fee + (r.fee || 0),
-          realisedPL: a.realisedPL + (r.realisedPL || 0),
+          qty: a.qty + Number(r.quantity || 0),
+          proceeds: a.proceeds + Number(r.proceeds || 0),
+          fee: a.fee + Number(r.fee || 0),
+          realisedPL: a.realisedPL + Number(r.realisedPL || 0),
         };
       },
       { qty: 0, proceeds: 0, fee: 0, realisedPL: 0 }

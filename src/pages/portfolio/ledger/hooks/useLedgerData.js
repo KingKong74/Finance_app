@@ -15,26 +15,41 @@ export function useLedgerData(activeTab) {
 
   const addEntry = useCallback(
     async (newEntry) => {
-      const payload =
-        activeTab === "cash"
-          ? {
-              date: newEntry.date,
-              amount: Number(newEntry.amount || 0),
-              currency: newEntry.currency,
-              broker: newEntry.broker || "", 
-              entryType: newEntry.entryType,
-              note: newEntry.note || "",
-            }
-          : {
-              ticker: safeUpper(newEntry.ticker),
-              date: newEntry.date,
-              quantity: Number(newEntry.quantity || 0),
-              price: Number(newEntry.price || 0),
-              fee: Math.abs(Number(newEntry.fee || 0)),
-              broker: newEntry.broker,
-              currency: newEntry.currency,
-              realisedPL: 0,
-            };
+      let payload;
+
+      if (activeTab === "cash") {
+        payload = {
+          date: newEntry.date,
+          ts: newEntry.ts || (newEntry.date ? `${newEntry.date}T00:00:00` : ""),
+          amount: Number(newEntry.amount || 0),
+          currency: newEntry.currency,
+          broker: newEntry.broker || "",
+          entryType: newEntry.entryType,
+          note: newEntry.note || "",
+        };
+      } else if (activeTab === "dividends") {
+        payload = {
+          date: newEntry.date,
+          ts: newEntry.ts || (newEntry.date ? `${newEntry.date}T00:00:00` : ""),
+          ticker: safeUpper(newEntry.ticker || ""),
+          amount: Number(newEntry.amount || 0),
+          currency: newEntry.currency,
+          broker: newEntry.broker || "",
+          note: newEntry.note || "",
+        };
+      } else {
+        payload = {
+          ticker: safeUpper(newEntry.ticker),
+          date: newEntry.date,
+          ts: newEntry.ts || (newEntry.date ? `${newEntry.date}T00:00:00` : ""),
+          quantity: Number(newEntry.quantity || 0),
+          price: Number(newEntry.price || 0),
+          fee: Math.abs(Number(newEntry.fee || 0)),
+          broker: newEntry.broker,
+          currency: newEntry.currency,
+          realisedPL: 0,
+        };
+      }
 
       const res = await fetch(`/api/ledger?tab=${activeTab}`, {
         method: "POST",
@@ -54,7 +69,9 @@ export function useLedgerData(activeTab) {
 
   const deleteEntry = useCallback(
     async (id) => {
-      const res = await fetch(`/api/ledger/${id}?tab=${activeTab}`, { method: "DELETE" });
+      const res = await fetch(`/api/ledger/${id}?tab=${activeTab}`, {
+        method: "DELETE",
+      });
       if (!res.ok) throw new Error(`DELETE failed: ${res.status}`);
       setEntries((prev) => prev.filter((x) => x._id !== id));
     },

@@ -3,7 +3,7 @@ import React from "react";
 export default function LedgerTabs({ activeTab, setActiveTab }) {
   return (
     <div className="ledger-tabs">
-      {["trades", "crypto", "forex", "cash"].map((tab) => (
+      {["trades", "crypto", "forex", "cash", "dividends"].map((tab) => (
         <button
           key={tab}
           className={activeTab === tab ? "active" : ""}

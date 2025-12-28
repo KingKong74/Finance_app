@@ -3,12 +3,14 @@ import { connectToDB } from "../utils/db.js";
 
 function normaliseTab(tab) {
   const t = String(tab || "").toLowerCase();
-  const allowed = ["trades", "crypto", "forex", "cash"];
+  const allowed = ["trades", "crypto", "forex", "cash", "dividends"];
   return allowed.includes(t) ? t : null;
 }
 
 function collectionForTab(tab) {
-  return tab === "cash" ? "cash" : "trades";
+  if (tab === "cash") return "cash";
+  if (tab === "dividends") return "dividends";
+  return "trades";
 }
 
 export default async function handler(req, res) {

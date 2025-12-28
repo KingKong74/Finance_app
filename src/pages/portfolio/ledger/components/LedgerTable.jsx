@@ -2,7 +2,7 @@ import React from "react";
 
 export default function LedgerTable({
   activeTab,
-  groupedEntries, // <-- array of [key, rows] for the current page
+  groupedEntries, // array of [key, rows] for the current page
   collapsed,
   toggleRow,
   deleteEntry,
@@ -13,49 +13,50 @@ export default function LedgerTable({
   grandTotalInBase,
   baseCurrency,
 }) {
+  const isCashLike = activeTab === "cash" || activeTab === "dividends";
+  const showTicker = activeTab !== "cash"; // dividends should show ticker too, cash doesn't
+  const showTradeCols = !isCashLike; // qty/price/fee/realised/broker
+
   return (
     <table className="ledger-table">
       <thead>
         <tr>
-          {activeTab !== "cash" && (
+          {showTicker && (
             <th onClick={() => handleSort("ticker")}>
               Ticker {sortArrow("ticker")}
             </th>
           )}
+
           <th onClick={() => handleSort("date")}>Date {sortArrow("date")}</th>
 
-          {activeTab !== "cash" && (
+          {showTradeCols && (
             <th onClick={() => handleSort("quantity")}>
               Qty {sortArrow("quantity")}
             </th>
           )}
 
-          {activeTab !== "cash" && (
+          {showTradeCols && (
             <th onClick={() => handleSort("price")}>
               Price {sortArrow("price")}
             </th>
           )}
 
-          <th
-            onClick={() =>
-              handleSort(activeTab === "cash" ? "amount" : "proceeds")
-            }
-          >
-            {activeTab === "cash" ? "Amount" : "Proceeds"}{" "}
-            {sortArrow(activeTab === "cash" ? "amount" : "proceeds")}
+          <th onClick={() => handleSort(isCashLike ? "amount" : "proceeds")}>
+            {isCashLike ? "Amount" : "Proceeds"}{" "}
+            {sortArrow(isCashLike ? "amount" : "proceeds")}
           </th>
 
-          {activeTab !== "cash" && (
+          {showTradeCols && (
             <th onClick={() => handleSort("fee")}>Fee {sortArrow("fee")}</th>
           )}
 
-          {activeTab !== "cash" && (
+          {showTradeCols && (
             <th onClick={() => handleSort("realisedPL")}>
               Realised P/L {sortArrow("realisedPL")}
             </th>
           )}
 
-          {activeTab !== "cash" && (
+          {showTradeCols && (
             <th onClick={() => handleSort("broker")}>
               Broker {sortArrow("broker")}
             </th>
@@ -67,7 +68,7 @@ export default function LedgerTable({
 
         {/* Filter row */}
         <tr className="ledger-filter-row">
-          {activeTab !== "cash" && (
+          {showTicker && (
             <td>
               <input
                 placeholder="Filter Ticker"
@@ -89,7 +90,7 @@ export default function LedgerTable({
             />
           </td>
 
-          {activeTab !== "cash" && (
+          {showTradeCols && (
             <td>
               <input
                 type="number"
@@ -102,12 +103,12 @@ export default function LedgerTable({
             </td>
           )}
 
-          {activeTab !== "cash" && <td></td>}
+          {showTradeCols && <td></td>}
           <td></td>
-          {activeTab !== "cash" && <td></td>}
-          {activeTab !== "cash" && <td></td>}
+          {showTradeCols && <td></td>}
+          {showTradeCols && <td></td>}
 
-          {activeTab !== "cash" && (
+          {showTradeCols && (
             <td>
               <select
                 value={filters.broker}
@@ -147,20 +148,20 @@ export default function LedgerTable({
 
           const subtotal = rows.reduce(
             (a, r) => {
-              if (activeTab === "cash") {
+              if (isCashLike) {
                 return {
                   qty: 0,
-                  proceeds: a.proceeds + (r.amount || 0),
+                  proceeds: a.proceeds + (Number(r.amount || 0)),
                   fee: 0,
                   realisedPL: 0,
                 };
               }
 
               return {
-                qty: a.qty + (r.quantity || 0),
-                proceeds: a.proceeds + (r.proceeds || 0),
-                fee: a.fee + (r.fee || 0),
-                realisedPL: a.realisedPL + (r.realisedPL || 0),
+                qty: a.qty + (Number(r.quantity || 0)),
+                proceeds: a.proceeds + (Number(r.proceeds || 0)),
+                fee: a.fee + (Number(r.fee || 0)),
+                realisedPL: a.realisedPL + (Number(r.realisedPL || 0)),
               };
             },
             { qty: 0, proceeds: 0, fee: 0, realisedPL: 0 }
@@ -168,63 +169,70 @@ export default function LedgerTable({
 
           const isCollapsed = !!collapsed[key];
 
+          // Group header label:
+          // - trades/forex/crypto group by ticker
+          // - dividends could group by ticker (nice)
+          // - cash groups by date (likely)
+          const headerTicker =
+            activeTab === "dividends" ? (rows[0]?.ticker || "—") : rows[0]?.ticker;
+
           return (
             <React.Fragment key={key}>
               <tr className="ledger-subtotal" onClick={() => toggleRow(key)}>
-                {activeTab !== "cash" && (
+                {showTicker && (
                   <td>
-                    <strong>{rows[0].ticker}</strong>
+                    <strong>{headerTicker}</strong>
                   </td>
                 )}
 
-                <td colSpan={activeTab !== "cash" ? 1 : 0}></td>
+                <td colSpan={showTicker ? 1 : 0}></td>
 
-                {activeTab !== "cash" && (
+                {showTradeCols && (
                   <td>
                     <strong>{subtotal.qty}</strong>
                   </td>
                 )}
 
-                {activeTab !== "cash" && <td></td>}
+                {showTradeCols && <td></td>}
 
                 <td>{subtotal.proceeds.toFixed(2)}</td>
 
-                {activeTab !== "cash" && <td>{subtotal.fee.toFixed(2)}</td>}
+                {showTradeCols && <td>{subtotal.fee.toFixed(2)}</td>}
 
-                {activeTab !== "cash" && (
+                {showTradeCols && (
                   <td>{subtotal.realisedPL.toFixed(2)}</td>
                 )}
 
-                {activeTab !== "cash" && <td></td>}
+                {showTradeCols && <td></td>}
 
                 <td>{currency}</td>
                 <td>{isCollapsed ? "▼" : "▲"}</td>
               </tr>
 
-              {/* ✅ Expanded shows ALL rows (no pagination slicing) */}
               {!isCollapsed &&
                 rows.map((r) => (
                   <tr key={r._id}>
-                    {activeTab !== "cash" && <td>{r.ticker}</td>}
+                    {showTicker && <td>{r.ticker || ""}</td>}
                     <td>{r.date}</td>
-                    {activeTab !== "cash" && <td>{r.quantity}</td>}
-                    {activeTab !== "cash" && <td>{r.price}</td>}
+
+                    {showTradeCols && <td>{r.quantity}</td>}
+                    {showTradeCols && <td>{r.price}</td>}
 
                     <td>
-                      {activeTab === "cash"
+                      {isCashLike
                         ? Number(r.amount || 0).toFixed(2)
                         : Number(r.proceeds || 0).toFixed(2)}
                     </td>
 
-                    {activeTab !== "cash" && (
+                    {showTradeCols && (
                       <td>{Number(r.fee || 0).toFixed(2)}</td>
                     )}
 
-                    {activeTab !== "cash" && (
+                    {showTradeCols && (
                       <td>{Number(r.realisedPL || 0).toFixed(2)}</td>
                     )}
 
-                    {activeTab !== "cash" && (
+                    {showTradeCols && (
                       <td>
                         <span
                           className={`broker-tag ${String(
@@ -253,17 +261,17 @@ export default function LedgerTable({
         })}
 
         <tr className="ledger-grand-total">
-          <td colSpan={activeTab !== "cash" ? 4 : 1}>
+          <td colSpan={showTicker ? 4 : 1}>
             <strong>Grand Total ({baseCurrency})</strong>
           </td>
 
           <td>{Number(grandTotalInBase.proceeds || 0).toFixed(2)}</td>
 
-          {activeTab !== "cash" && (
+          {showTradeCols && (
             <td>{Number(grandTotalInBase.fee || 0).toFixed(2)}</td>
           )}
 
-          {activeTab !== "cash" && (
+          {showTradeCols && (
             <td>{Number(grandTotalInBase.realisedPL || 0).toFixed(2)}</td>
           )}
 

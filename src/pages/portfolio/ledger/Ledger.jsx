@@ -45,17 +45,18 @@ export default function Ledger() {
   const [newEntry, setNewEntry] = useState({
     ticker: "",
     date: "",
-    time: "",
+    ts: "",
     quantity: "",
     price: "",
     fee: "",
     broker: "IBKR",
     currency: "USD",
-    // cash fields
+    // cash/dividend fields
     amount: "",
     entryType: "deposit",
     note: "",
   });
+
 
   const { entries, fetchData, addEntry, deleteEntry } = useLedgerData(activeTab);
 
@@ -92,18 +93,25 @@ export default function Ledger() {
 
   const filteredAndSorted = useMemo(() => {
     const f = filters;
+    const isCashLike = activeTab === "cash" || activeTab === "dividends";
 
     let out = entries.filter((r) => {
-      if (activeTab === "cash") {
+      if (isCashLike) {
+        // dividends: let ticker filter work (optional), cash: no ticker
+        const tickerOk =
+          activeTab === "dividends"
+            ? (!f.ticker || safeUpper(r.ticker).includes(safeUpper(f.ticker)))
+            : true;
+
         return (
+          tickerOk &&
           (!f.date || String(r.date) === f.date) &&
           (!f.currency || r.currency === f.currency)
         );
       }
 
       return (
-        (!f.ticker ||
-          safeUpper(r.ticker).includes(safeUpper(f.ticker))) &&
+        (!f.ticker || safeUpper(r.ticker).includes(safeUpper(f.ticker))) &&
         (!f.date || String(r.date) === f.date) &&
         (!f.qty || Number(r.quantity) === Number(f.qty)) &&
         (!f.broker || r.broker === f.broker) &&
@@ -114,6 +122,7 @@ export default function Ledger() {
     out = applySort(out, sortConfig, activeTab);
     return out;
   }, [entries, filters, sortConfig, activeTab]);
+
 
   const grouped = useMemo(
     () => groupRows(filteredAndSorted, activeTab),
@@ -157,7 +166,7 @@ export default function Ledger() {
         ...prev,
         ticker: "",
         date: "",
-        time: "",
+        ts: "",
         quantity: "",
         price: "",
         fee: "",
