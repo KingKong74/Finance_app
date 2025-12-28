@@ -10,11 +10,12 @@ export default function ImportModal({ onClose, onImported }) {
   const [err, setErr] = useState("");
 
   const counts = useMemo(() => {
-    const c = { trades: 0, forex: 0, cash: 0 };
+    const c = { trades: 0, forex: 0, cash: 0, dividends: 0 };
     rows.forEach((r) => {
       if (r.tab === "trades") c.trades++;
       if (r.tab === "forex") c.forex++;
       if (r.tab === "cash") c.cash++;
+      if (r.tab === "dividends") c.dividends++;
     });
     return c;
   }, [rows]);
@@ -113,6 +114,7 @@ export default function ImportModal({ onClose, onImported }) {
                 <option value="trades">Trades</option>
                 <option value="forex">Forex</option>
                 <option value="cash">Cash (Dep/With)</option>
+                <option value="dividends">Dividends</option>
               </select>
             </label>
 
@@ -126,7 +128,7 @@ export default function ImportModal({ onClose, onImported }) {
         </div>
 
         <div style={{ marginTop: 10, fontSize: 13 }}>
-          Parsed: Trades {counts.trades} · Forex {counts.forex} · Cash {counts.cash}
+          Parsed: Trades {counts.trades} · Forex {counts.forex} · Cash {counts.cash} · Dividends {counts.dividends}
         </div>
 
         {err && <div style={{ marginTop: 10, color: "crimson" }}>{err}</div>}
@@ -161,7 +163,7 @@ export default function ImportModal({ onClose, onImported }) {
                   <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0" }}>{r.date}</td>
                   <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0" }}>{r.ticker || ""}</td>
                   <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0", textAlign: "right" }}>
-                    {r.quantity ?? ""}
+                    {r.tab === "dividends" ? r.amount : r.quantity ?? ""}
                   </td>
                   <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0", textAlign: "right" }}>
                     {r.price ?? ""}
