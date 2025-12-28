@@ -1,3 +1,4 @@
+// src/pages/portfolio/overview/components/AccountsPanel.jsx
 import React from "react";
 import StatCard from "./StatCard";
 

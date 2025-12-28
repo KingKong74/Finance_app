@@ -1,4 +1,4 @@
-// DashboardContent.jsx
+// src/pages/portfolio/overview/dashboard/Dashboard.jsx
 import React from "react";
 import OverviewChart from "./components/overviewChart";
 import PortfolioPie from "./components/portfolioPie";

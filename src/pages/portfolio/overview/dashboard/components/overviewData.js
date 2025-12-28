@@ -1,11 +1,4 @@
-// overviewData.js
-
-export const accounts = [
-  { name: "All Accounts", total: 125000, cash: 18500, pl: 6200, dayPL: 420 },
-  { name: "Brokerage", total: 65000, cash: 10000, pl: 2500, dayPL: -120 },
-  { name: "Super", total: 40000, cash: 5000, pl: 3000, dayPL: 180 },
-  { name: "Crypto", total: 20000, cash: 3500, pl: 700, dayPL: -60 },
-];
+// src/pages/portfolio/overview/dashboard/components/overviewData.js
 
 export const overviewTabs = ["Dashboard", "Positions", "Performance", "Dividends"];
 
@@ -18,7 +11,6 @@ export const perfData = {
   "ALL": [50, 55, 60, 58, 62, 65, 70],
 };
 
-// Pie chart: Investments by % of portfolio
 export const portfolioPieData = [
   { name: "Stocks", value: 45 },
   { name: "Bonds", value: 20 },
@@ -27,7 +19,6 @@ export const portfolioPieData = [
   { name: "Cash", value: 10 },
 ];
 
-// Column chart: Portfolio value (weekly, last 5 working days)
 export const portfolioValueData = [
   { day: "Mon", value: 124500 },
   { day: "Tue", value: 125200 },
@@ -36,7 +27,6 @@ export const portfolioValueData = [
   { day: "Fri", value: 125800 },
 ];
 
-// Column chart: Dividends yearly
 export const dividendsData = [
   { year: "2021", dividends: 1200 },
   { year: "2022", dividends: 1500 },
@@ -44,7 +34,6 @@ export const dividendsData = [
   { year: "2024", dividends: 2000 },
 ];
 
-// Stacked column chart: Cashflow (interest + dividends per year)
 export const cashflowData = [
   { year: "2021", interest: 400, dividends: 1200 },
   { year: "2022", interest: 500, dividends: 1500 },
