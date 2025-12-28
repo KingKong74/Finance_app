@@ -19,6 +19,10 @@ import AddEntryForm from "./components/AddEntryForm";
 import LedgerTable from "./components/LedgerTable";
 import PaginationBar from "./components/PaginationBar";
 
+// NOTE: you don't actually use these in Ledger.jsx yet.
+// Keep if you plan to format values in this file; otherwise remove to avoid lint warnings.
+import { money, number } from "../../utils/format";
+
 export default function Ledger() {
   const [activeTab, setActiveTab] = useState("trades");
   const [baseCurrency, setBaseCurrency] = useState("AUD");
@@ -42,14 +46,18 @@ export default function Ledger() {
       } catch (e) {
         console.warn("FX fetch failed, using fallback rates.");
         setFxRates({ AUD: 1, USD: 1.65, EUR: 1.8 });
+        setFxMeta({ fetchedAt: "" });
       }
     })();
   }, [baseCurrency]);
 
+  // NOTE: now used as "groups per page" (not rows)
   const [rowLimit, setRowLimit] = useState(10);
+
   const [collapsed, setCollapsed] = useState({});
   const [showImport, setShowImport] = useState(false);
 
+  // Filters
   const [filters, setFilters] = useState({
     ticker: "",
     date: "",
@@ -58,7 +66,10 @@ export default function Ledger() {
     currency: "",
   });
 
+  // Sorting
   const [sortConfig, setSortConfig] = useState({ key: "", direction: "asc" });
+
+  // Pagination
   const [currentPage, setCurrentPage] = useState(1);
 
   const [newEntry, setNewEntry] = useState({
@@ -70,13 +81,13 @@ export default function Ledger() {
     fee: "",
     broker: "IBKR",
     currency: "USD",
+    // cash/dividend fields
     amount: "",
     entryType: "deposit",
     note: "",
   });
 
-  const { entries, fetchData, addEntry, deleteEntry } =
-    useLedgerData(activeTab);
+  const { entries, fetchData, addEntry, deleteEntry } = useLedgerData(activeTab);
 
   useEffect(() => {
     (async () => {
@@ -87,6 +98,7 @@ export default function Ledger() {
       }
     })();
 
+    // reset UI bits when switching tabs
     setCollapsed({});
     setCurrentPage(1);
     setFilters({ ticker: "", date: "", qty: "", broker: "", currency: "" });
@@ -95,18 +107,13 @@ export default function Ledger() {
 
   const handleSort = (key) => {
     setSortConfig((prev) => {
-      const direction =
-        prev.key === key && prev.direction === "asc" ? "desc" : "asc";
+      const direction = prev.key === key && prev.direction === "asc" ? "desc" : "asc";
       return { key, direction };
     });
   };
 
   const sortArrow = (key) =>
-    sortConfig.key === key
-      ? sortConfig.direction === "asc"
-        ? "↑"
-        : "↓"
-      : "";
+    sortConfig.key === key ? (sortConfig.direction === "asc" ? "↑" : "↓") : "";
 
   const filteredAndSorted = useMemo(() => {
     const f = filters;
@@ -114,10 +121,10 @@ export default function Ledger() {
 
     let out = entries.filter((r) => {
       if (isCashLike) {
+        // dividends: let ticker filter work (optional), cash: no ticker
         const tickerOk =
           activeTab === "dividends"
-            ? (!f.ticker ||
-                safeUpper(r.ticker).includes(safeUpper(f.ticker)))
+            ? (!f.ticker || safeUpper(r.ticker).includes(safeUpper(f.ticker)))
             : true;
 
         return (
@@ -128,8 +135,7 @@ export default function Ledger() {
       }
 
       return (
-        (!f.ticker ||
-          safeUpper(r.ticker).includes(safeUpper(f.ticker))) &&
+        (!f.ticker || safeUpper(r.ticker).includes(safeUpper(f.ticker))) &&
         (!f.date || String(r.date) === f.date) &&
         (!f.qty || Number(r.quantity) === Number(f.qty)) &&
         (!f.broker || r.broker === f.broker) &&
@@ -137,51 +143,46 @@ export default function Ledger() {
       );
     });
 
-    return applySort(out, sortConfig, activeTab);
+    out = applySort(out, sortConfig, activeTab);
+    return out;
   }, [entries, filters, sortConfig, activeTab]);
 
-  const grouped = useMemo(
-    () => groupRows(filteredAndSorted, activeTab),
-    [filteredAndSorted, activeTab]
-  );
+  const grouped = useMemo(() => groupRows(filteredAndSorted, activeTab), [
+    filteredAndSorted,
+    activeTab,
+  ]);
 
-  const totalsByCurrency = useMemo(
-    () => calcTotalsByCurrency(grouped, activeTab),
-    [grouped, activeTab]
-  );
+  const totalsByCurrency = useMemo(() => calcTotalsByCurrency(grouped, activeTab), [
+    grouped,
+    activeTab,
+  ]);
 
+  // ✅ IMPORTANT: pass fxRates in
   const grandTotalInBase = useMemo(
-    () =>
-      calcGrandTotalInBase(
-        totalsByCurrency,
-        baseCurrency,
-        fxRates
-      ),
+    () => calcGrandTotalInBase(totalsByCurrency, baseCurrency, fxRates),
     [totalsByCurrency, baseCurrency, fxRates]
   );
 
-  const groupEntriesAll = useMemo(
-    () => Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b)),
-    [grouped]
-  );
+  // ✅ Option A: paginate by group (subtotal row)
+  const groupEntriesAll = useMemo(() => {
+    return Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b));
+  }, [grouped]);
 
-  const totalPages = Math.max(
-    1,
-    Math.ceil(groupEntriesAll.length / rowLimit)
-  );
+  const totalPages = Math.max(1, Math.ceil(groupEntriesAll.length / rowLimit));
 
   const groupedEntriesPage = useMemo(() => {
     const start = (currentPage - 1) * rowLimit;
     return groupEntriesAll.slice(start, start + rowLimit);
   }, [groupEntriesAll, currentPage, rowLimit]);
 
-  const toggleRow = (key) =>
-    setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
+  const toggleRow = (key) => setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
 
   const onAdd = async () => {
     try {
       await addEntry(newEntry);
       setCurrentPage(1);
+
+      // keep broker/currency, clear the rest
       setNewEntry((prev) => ({
         ...prev,
         ticker: "",
@@ -206,6 +207,9 @@ export default function Ledger() {
         baseCurrency={baseCurrency}
         setBaseCurrency={setBaseCurrency}
         onOpenImport={() => setShowImport(true)}
+        // If you want to display FX rate in the bar later, pass these:
+        // fxRates={fxRates}
+        // fxMeta={fxMeta}
       />
 
       <AddEntryForm
