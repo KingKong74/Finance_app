@@ -1,3 +1,5 @@
+// src/pages/portfolio/ledger/Ledger.jsx
+
 import React, { useEffect, useMemo, useState } from "react";
 import "../../../css/ledgerTab.css";
 import ImportModal from "./components/ImportModal.jsx";
@@ -19,15 +21,35 @@ import PaginationBar from "./components/PaginationBar";
 
 export default function Ledger() {
   const [activeTab, setActiveTab] = useState("trades");
-
-  // NOTE: now used as "groups per page" (not rows)
-  const [rowLimit, setRowLimit] = useState(10);
-
-  const [collapsed, setCollapsed] = useState({});
   const [baseCurrency, setBaseCurrency] = useState("AUD");
+
+  const [fxRates, setFxRates] = useState({ AUD: 1 });
+  const [fxMeta, setFxMeta] = useState({ fetchedAt: "" });
+
+  // 🔁 Fetch FX whenever base currency changes
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`/api/fx?base=${baseCurrency}`);
+        if (!res.ok) throw new Error("fx failed");
+        const json = await res.json();
+
+        const rates = { ...(json?.rates || {}) };
+        rates[baseCurrency] = 1;
+
+        setFxRates(rates);
+        setFxMeta({ fetchedAt: json.fetchedAt || "" });
+      } catch (e) {
+        console.warn("FX fetch failed, using fallback rates.");
+        setFxRates({ AUD: 1, USD: 1.65, EUR: 1.8 });
+      }
+    })();
+  }, [baseCurrency]);
+
+  const [rowLimit, setRowLimit] = useState(10);
+  const [collapsed, setCollapsed] = useState({});
   const [showImport, setShowImport] = useState(false);
 
-  // Filters
   const [filters, setFilters] = useState({
     ticker: "",
     date: "",
@@ -36,10 +58,7 @@ export default function Ledger() {
     currency: "",
   });
 
-  // Sorting
   const [sortConfig, setSortConfig] = useState({ key: "", direction: "asc" });
-
-  // Pagination
   const [currentPage, setCurrentPage] = useState(1);
 
   const [newEntry, setNewEntry] = useState({
@@ -51,14 +70,13 @@ export default function Ledger() {
     fee: "",
     broker: "IBKR",
     currency: "USD",
-    // cash/dividend fields
     amount: "",
     entryType: "deposit",
     note: "",
   });
 
-
-  const { entries, fetchData, addEntry, deleteEntry } = useLedgerData(activeTab);
+  const { entries, fetchData, addEntry, deleteEntry } =
+    useLedgerData(activeTab);
 
   useEffect(() => {
     (async () => {
@@ -69,7 +87,6 @@ export default function Ledger() {
       }
     })();
 
-    // reset UI bits when switching tabs
     setCollapsed({});
     setCurrentPage(1);
     setFilters({ ticker: "", date: "", qty: "", broker: "", currency: "" });
@@ -97,10 +114,10 @@ export default function Ledger() {
 
     let out = entries.filter((r) => {
       if (isCashLike) {
-        // dividends: let ticker filter work (optional), cash: no ticker
         const tickerOk =
           activeTab === "dividends"
-            ? (!f.ticker || safeUpper(r.ticker).includes(safeUpper(f.ticker)))
+            ? (!f.ticker ||
+                safeUpper(r.ticker).includes(safeUpper(f.ticker)))
             : true;
 
         return (
@@ -111,7 +128,8 @@ export default function Ledger() {
       }
 
       return (
-        (!f.ticker || safeUpper(r.ticker).includes(safeUpper(f.ticker))) &&
+        (!f.ticker ||
+          safeUpper(r.ticker).includes(safeUpper(f.ticker))) &&
         (!f.date || String(r.date) === f.date) &&
         (!f.qty || Number(r.quantity) === Number(f.qty)) &&
         (!f.broker || r.broker === f.broker) &&
@@ -119,10 +137,8 @@ export default function Ledger() {
       );
     });
 
-    out = applySort(out, sortConfig, activeTab);
-    return out;
+    return applySort(out, sortConfig, activeTab);
   }, [entries, filters, sortConfig, activeTab]);
-
 
   const grouped = useMemo(
     () => groupRows(filteredAndSorted, activeTab),
@@ -135,22 +151,28 @@ export default function Ledger() {
   );
 
   const grandTotalInBase = useMemo(
-    () => calcGrandTotalInBase(totalsByCurrency, baseCurrency),
-    [totalsByCurrency, baseCurrency]
+    () =>
+      calcGrandTotalInBase(
+        totalsByCurrency,
+        baseCurrency,
+        fxRates
+      ),
+    [totalsByCurrency, baseCurrency, fxRates]
   );
 
-  // ✅ Option A implementation:
-  // paginate by GROUP (subtotal row), but when expanded show ALL rows in the group
-  const groupEntriesAll = useMemo(() => {
-    return Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b));
-  }, [grouped]);
+  const groupEntriesAll = useMemo(
+    () => Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b)),
+    [grouped]
+  );
 
-  const totalPages = Math.max(1, Math.ceil(groupEntriesAll.length / rowLimit));
+  const totalPages = Math.max(
+    1,
+    Math.ceil(groupEntriesAll.length / rowLimit)
+  );
 
   const groupedEntriesPage = useMemo(() => {
     const start = (currentPage - 1) * rowLimit;
-    const end = start + rowLimit;
-    return groupEntriesAll.slice(start, end);
+    return groupEntriesAll.slice(start, start + rowLimit);
   }, [groupEntriesAll, currentPage, rowLimit]);
 
   const toggleRow = (key) =>
@@ -160,8 +182,6 @@ export default function Ledger() {
     try {
       await addEntry(newEntry);
       setCurrentPage(1);
-
-      // keep broker/currency, clear the rest
       setNewEntry((prev) => ({
         ...prev,
         ticker: "",
@@ -197,7 +217,7 @@ export default function Ledger() {
 
       <LedgerTable
         activeTab={activeTab}
-        groupedEntries={groupedEntriesPage} // ✅ page slice of groups
+        groupedEntries={groupedEntriesPage}
         collapsed={collapsed}
         toggleRow={toggleRow}
         deleteEntry={deleteEntry}

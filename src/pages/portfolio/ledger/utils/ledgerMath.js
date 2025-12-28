@@ -1,5 +1,4 @@
 // src/pages/portfolio/ledger/utils/ledgerMath.js
-import { EXCHANGE_RATES } from "./ledgerNormalise";
 
 export function applySort(out, sortConfig, activeTab) {
   if (!sortConfig.key) return out;
@@ -36,14 +35,12 @@ export function groupRows(rows, activeTab) {
   const isDividends = activeTab === "dividends";
 
   return rows.reduce((acc, r) => {
-    // cash grouped by currency (as before)
     if (isCash) {
       const key = r.currency || "AUD";
       (acc[key] ||= []).push(r);
       return acc;
     }
 
-    // dividends: group by ticker + currency
     if (isDividends) {
       const ticker = String(r.ticker || "").toUpperCase() || "—";
       const cur = r.currency || "USD";
@@ -52,7 +49,6 @@ export function groupRows(rows, activeTab) {
       return acc;
     }
 
-    // trades/forex/crypto: group by ticker + currency
     const ticker = String(r.ticker || "").toUpperCase();
     const cur = r.currency || "USD";
     const key = `${ticker}_${cur}`;
@@ -72,7 +68,7 @@ export function calcTotalsByCurrency(grouped, activeTab) {
         if (isCashLike) {
           return {
             qty: 0,
-            proceeds: a.proceeds + Number(r.amount || 0), // amount-based
+            proceeds: a.proceeds + Number(r.amount || 0),
             fee: 0,
             realisedPL: 0,
           };
@@ -97,12 +93,19 @@ export function calcTotalsByCurrency(grouped, activeTab) {
   }, {});
 }
 
-export function calcGrandTotalInBase(totalsByCurrency, baseCurrency) {
+export function calcGrandTotalInBase(
+  totalsByCurrency,
+  baseCurrency,
+  fxRates
+) {
   return Object.entries(totalsByCurrency).reduce(
     (acc, [currency, totals]) => {
-      const rate = EXCHANGE_RATES[currency] ?? 1;
-      const baseRate = EXCHANGE_RATES[baseCurrency] ?? 1;
-      const convert = (val) => (Number(val || 0) * rate) / baseRate;
+      // fxRates is: 1 baseCurrency = fxRates[target]
+      // so converting FROM target → base = divide
+      const fx = Number(fxRates?.[currency]);
+      const basePer1 = currency === baseCurrency ? 1 : fx ? 1 / fx : 1;
+
+      const convert = (v) => Number(v || 0) * basePer1;
 
       return {
         qty: acc.qty + Number(totals.qty || 0),
