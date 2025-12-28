@@ -6,7 +6,7 @@ import PortfolioValue from "./components/portfolioValue";
 import DividendsColumn from "./components/dividendsColumn";
 import CashflowStacked from "./components/cashflowStacked";
 
-export default function DashboardContent({
+export default function Dashboard({
   range,
   onRangeChange,
   selectedAccount,

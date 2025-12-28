@@ -1,11 +1,10 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import "../../../css/overviewTab.css";
 
 import { accounts, overviewTabs } from "./dashboard/components/overviewData";
 import AccountsPanel from "./components/AccountsPanel";
-import Dashboard from "./dashboard/DashboardContent";
+import Dashboard from "./dashboard/Dashboard";
 import Positions from "./positions/Positions";
-
 
 export default function Overview() {
   const [range, setRange] = useState("YTD");
@@ -14,13 +13,16 @@ export default function Overview() {
   const [panelOpen, setPanelOpen] = useState(true);
   const [overviewTab, setOverviewTab] = useState("Dashboard");
 
-  const activeAccount =
-    accounts.find((a) => a.name === selectedAccount) || accounts[0];
+  const activeAccount = useMemo(
+    () => accounts.find((a) => a.name === selectedAccount) || accounts[0],
+    [selectedAccount]
+  );
 
-  const rateOfReturn =
-    activeAccount.total - activeAccount.pl !== 0
-      ? (activeAccount.pl / (activeAccount.total - activeAccount.pl)) * 100
-      : 0;
+  const rateOfReturn = useMemo(() => {
+    const base = activeAccount.total - activeAccount.pl;
+    if (!base) return 0;
+    return (activeAccount.pl / base) * 100;
+  }, [activeAccount]);
 
   return (
     <div className="overview-grid-wrapper">
@@ -66,4 +68,3 @@ export default function Overview() {
     </div>
   );
 }
-//
