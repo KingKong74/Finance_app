@@ -2,11 +2,9 @@ import React from "react";
 
 export default function LedgerTable({
   activeTab,
-  grouped,
+  groupedEntries, // <-- array of [key, rows] for the current page
   collapsed,
   toggleRow,
-  currentPage,
-  rowLimit,
   deleteEntry,
   filters,
   setFilters,
@@ -85,7 +83,9 @@ export default function LedgerTable({
             <input
               type="date"
               value={filters.date}
-              onChange={(e) => setFilters((p) => ({ ...p, date: e.target.value }))}
+              onChange={(e) =>
+                setFilters((p) => ({ ...p, date: e.target.value }))
+              }
             />
           </td>
 
@@ -95,7 +95,9 @@ export default function LedgerTable({
                 type="number"
                 placeholder="Qty"
                 value={filters.qty}
-                onChange={(e) => setFilters((p) => ({ ...p, qty: e.target.value }))}
+                onChange={(e) =>
+                  setFilters((p) => ({ ...p, qty: e.target.value }))
+                }
               />
             </td>
           )}
@@ -140,7 +142,7 @@ export default function LedgerTable({
       </thead>
 
       <tbody>
-        {Object.entries(grouped).map(([key, rows]) => {
+        {groupedEntries.map(([key, rows]) => {
           const currency = rows[0]?.currency || "";
 
           const subtotal = rows.reduce(
@@ -163,6 +165,8 @@ export default function LedgerTable({
             },
             { qty: 0, proceeds: 0, fee: 0, realisedPL: 0 }
           );
+
+          const isCollapsed = !!collapsed[key];
 
           return (
             <React.Fragment key={key}>
@@ -194,55 +198,56 @@ export default function LedgerTable({
                 {activeTab !== "cash" && <td></td>}
 
                 <td>{currency}</td>
-                <td>{collapsed[key] ? "▼" : "▲"}</td>
+                <td>{isCollapsed ? "▼" : "▲"}</td>
               </tr>
 
-              {!collapsed[key] &&
-                rows
-                  .slice((currentPage - 1) * rowLimit, currentPage * rowLimit)
-                  .map((r) => (
-                    <tr key={r._id}>
-                      {activeTab !== "cash" && <td>{r.ticker}</td>}
-                      <td>{r.date}</td>
-                      {activeTab !== "cash" && <td>{r.quantity}</td>}
-                      {activeTab !== "cash" && <td>{r.price}</td>}
+              {/* ✅ Expanded shows ALL rows (no pagination slicing) */}
+              {!isCollapsed &&
+                rows.map((r) => (
+                  <tr key={r._id}>
+                    {activeTab !== "cash" && <td>{r.ticker}</td>}
+                    <td>{r.date}</td>
+                    {activeTab !== "cash" && <td>{r.quantity}</td>}
+                    {activeTab !== "cash" && <td>{r.price}</td>}
 
+                    <td>
+                      {activeTab === "cash"
+                        ? Number(r.amount || 0).toFixed(2)
+                        : Number(r.proceeds || 0).toFixed(2)}
+                    </td>
+
+                    {activeTab !== "cash" && (
+                      <td>{Number(r.fee || 0).toFixed(2)}</td>
+                    )}
+
+                    {activeTab !== "cash" && (
+                      <td>{Number(r.realisedPL || 0).toFixed(2)}</td>
+                    )}
+
+                    {activeTab !== "cash" && (
                       <td>
-                        {activeTab === "cash"
-                          ? Number(r.amount || 0).toFixed(2)
-                          : Number(r.proceeds || 0).toFixed(2)}
-                      </td>
-
-                      {activeTab !== "cash" && (
-                        <td>{Number(r.fee || 0).toFixed(2)}</td>
-                      )}
-
-                      {activeTab !== "cash" && (
-                        <td>{Number(r.realisedPL || 0).toFixed(2)}</td>
-                      )}
-
-                      {activeTab !== "cash" && (
-                        <td>
-                          <span
-                            className={`broker-tag ${String(r.broker || "").toLowerCase()}`}
-                          >
-                            {r.broker}
-                          </span>
-                        </td>
-                      )}
-
-                      <td>{r.currency}</td>
-
-                      <td>
-                        <button
-                          className="icon-btn"
-                          onClick={() => deleteEntry(r._id)}
+                        <span
+                          className={`broker-tag ${String(
+                            r.broker || ""
+                          ).toLowerCase()}`}
                         >
-                          ✕
-                        </button>
+                          {r.broker}
+                        </span>
                       </td>
-                    </tr>
-                  ))}
+                    )}
+
+                    <td>{r.currency}</td>
+
+                    <td>
+                      <button
+                        className="icon-btn"
+                        onClick={() => deleteEntry(r._id)}
+                      >
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                ))}
             </React.Fragment>
           );
         })}

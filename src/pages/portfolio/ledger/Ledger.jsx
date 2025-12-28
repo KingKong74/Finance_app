@@ -3,7 +3,12 @@ import "../../../css/ledgerTab.css";
 import ImportModal from "./components/ImportModal.jsx";
 
 import { useLedgerData } from "./hooks/useLedgerData";
-import { applySort, calcGrandTotalInBase, calcTotalsByCurrency, groupRows } from "./utils/ledgerMath";
+import {
+  applySort,
+  calcGrandTotalInBase,
+  calcTotalsByCurrency,
+  groupRows,
+} from "./utils/ledgerMath";
 import { safeUpper } from "./utils/ledgerNormalise";
 
 import LedgerTabs from "./components/LedgerTabs";
@@ -14,7 +19,10 @@ import PaginationBar from "./components/PaginationBar";
 
 export default function Ledger() {
   const [activeTab, setActiveTab] = useState("trades");
+
+  // NOTE: now used as "groups per page" (not rows)
   const [rowLimit, setRowLimit] = useState(25);
+
   const [collapsed, setCollapsed] = useState({});
   const [baseCurrency, setBaseCurrency] = useState("AUD");
   const [showImport, setShowImport] = useState(false);
@@ -68,24 +76,33 @@ export default function Ledger() {
 
   const handleSort = (key) => {
     setSortConfig((prev) => {
-      const direction = prev.key === key && prev.direction === "asc" ? "desc" : "asc";
+      const direction =
+        prev.key === key && prev.direction === "asc" ? "desc" : "asc";
       return { key, direction };
     });
   };
 
   const sortArrow = (key) =>
-    sortConfig.key === key ? (sortConfig.direction === "asc" ? "↑" : "↓") : "";
+    sortConfig.key === key
+      ? sortConfig.direction === "asc"
+        ? "↑"
+        : "↓"
+      : "";
 
   const filteredAndSorted = useMemo(() => {
     const f = filters;
 
     let out = entries.filter((r) => {
       if (activeTab === "cash") {
-        return (!f.date || String(r.date) === f.date) && (!f.currency || r.currency === f.currency);
+        return (
+          (!f.date || String(r.date) === f.date) &&
+          (!f.currency || r.currency === f.currency)
+        );
       }
 
       return (
-        (!f.ticker || safeUpper(r.ticker).includes(safeUpper(f.ticker))) &&
+        (!f.ticker ||
+          safeUpper(r.ticker).includes(safeUpper(f.ticker))) &&
         (!f.date || String(r.date) === f.date) &&
         (!f.qty || Number(r.quantity) === Number(f.qty)) &&
         (!f.broker || r.broker === f.broker) &&
@@ -97,16 +114,37 @@ export default function Ledger() {
     return out;
   }, [entries, filters, sortConfig, activeTab]);
 
-  const grouped = useMemo(() => groupRows(filteredAndSorted, activeTab), [filteredAndSorted, activeTab]);
-  const totalsByCurrency = useMemo(() => calcTotalsByCurrency(grouped, activeTab), [grouped, activeTab]);
+  const grouped = useMemo(
+    () => groupRows(filteredAndSorted, activeTab),
+    [filteredAndSorted, activeTab]
+  );
+
+  const totalsByCurrency = useMemo(
+    () => calcTotalsByCurrency(grouped, activeTab),
+    [grouped, activeTab]
+  );
+
   const grandTotalInBase = useMemo(
     () => calcGrandTotalInBase(totalsByCurrency, baseCurrency),
     [totalsByCurrency, baseCurrency]
   );
 
-  const totalPages = Math.max(1, Math.ceil(filteredAndSorted.length / rowLimit));
+  // ✅ Option A implementation:
+  // paginate by GROUP (subtotal row), but when expanded show ALL rows in the group
+  const groupEntriesAll = useMemo(() => {
+    return Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b));
+  }, [grouped]);
 
-  const toggleRow = (key) => setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
+  const totalPages = Math.max(1, Math.ceil(groupEntriesAll.length / rowLimit));
+
+  const groupedEntriesPage = useMemo(() => {
+    const start = (currentPage - 1) * rowLimit;
+    const end = start + rowLimit;
+    return groupEntriesAll.slice(start, end);
+  }, [groupEntriesAll, currentPage, rowLimit]);
+
+  const toggleRow = (key) =>
+    setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
 
   const onAdd = async () => {
     try {
@@ -148,11 +186,9 @@ export default function Ledger() {
 
       <LedgerTable
         activeTab={activeTab}
-        grouped={grouped}
+        groupedEntries={groupedEntriesPage} // ✅ page slice of groups
         collapsed={collapsed}
         toggleRow={toggleRow}
-        currentPage={currentPage}
-        rowLimit={rowLimit}
         deleteEntry={deleteEntry}
         filters={filters}
         setFilters={setFilters}
