@@ -21,6 +21,7 @@ export function useLedgerData(activeTab) {
               date: newEntry.date,
               amount: Number(newEntry.amount || 0),
               currency: newEntry.currency,
+              broker: newEntry.broker || "", 
               entryType: newEntry.entryType,
               note: newEntry.note || "",
             }

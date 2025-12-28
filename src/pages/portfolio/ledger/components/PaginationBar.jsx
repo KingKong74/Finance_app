@@ -10,7 +10,7 @@ export default function PaginationBar({
   return (
     <div className="ledger-controls-bottom">
       <label>
-        Rows per page:
+        Groups per page:
         <select
           value={rowLimit}
           onChange={(e) => {

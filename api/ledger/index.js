@@ -38,6 +38,7 @@ export default async function handler(req, res) {
           date: payload.date, // "YYYY-MM-DD"
           amount: amountNum,
           currency: payload.currency || "AUD",
+          broker: payload.broker || "",
           entryType: payload.entryType || (amountNum >= 0 ? "deposit" : "withdrawal"),
           note: payload.note || "",
           createdAt: new Date(),
@@ -54,6 +55,7 @@ export default async function handler(req, res) {
       const doc = {
         ticker: String(payload.ticker).toUpperCase(),
         date: payload.date, // "YYYY-MM-DD"
+        time: payload.time || null,
         quantity: Number(payload.quantity || 0), // negative sells stay negative ✅
         price: Number(payload.price || 0),
         fee: Math.abs(Number(payload.fee || 0)),

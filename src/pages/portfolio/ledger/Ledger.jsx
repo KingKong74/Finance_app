@@ -45,6 +45,7 @@ export default function Ledger() {
   const [newEntry, setNewEntry] = useState({
     ticker: "",
     date: "",
+    time: "",
     quantity: "",
     price: "",
     fee: "",
@@ -156,6 +157,7 @@ export default function Ledger() {
         ...prev,
         ticker: "",
         date: "",
+        time: "",
         quantity: "",
         price: "",
         fee: "",
