@@ -21,7 +21,7 @@ import PaginationBar from "./components/PaginationBar";
 
 // NOTE: you don't actually use these in Ledger.jsx yet.
 // Keep if you plan to format values in this file; otherwise remove to avoid lint warnings.
-import { money, number } from "../../utils/format";
+import { money, number } from "../../../utils/format";
 
 export default function Ledger() {
   const [activeTab, setActiveTab] = useState("trades");
