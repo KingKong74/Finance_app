@@ -1,5 +1,23 @@
 import React from "react";
 
+// ✅ AU number formatting helpers (adds thousands separators)
+const fmtMoney = new Intl.NumberFormat("en-AU", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const fmtNumber = new Intl.NumberFormat("en-AU", {
+  maximumFractionDigits: 8,
+});
+
+function money(v) {
+  return fmtMoney.format(Number(v || 0));
+}
+
+function number(v) {
+  return fmtNumber.format(Number(v || 0));
+}
+
 export default function LedgerTable({
   activeTab,
   groupedEntries, // array of [key, rows] for the current page
@@ -151,17 +169,17 @@ export default function LedgerTable({
               if (isCashLike) {
                 return {
                   qty: 0,
-                  proceeds: a.proceeds + (Number(r.amount || 0)),
+                  proceeds: a.proceeds + Number(r.amount || 0),
                   fee: 0,
                   realisedPL: 0,
                 };
               }
 
               return {
-                qty: a.qty + (Number(r.quantity || 0)),
-                proceeds: a.proceeds + (Number(r.proceeds || 0)),
-                fee: a.fee + (Number(r.fee || 0)),
-                realisedPL: a.realisedPL + (Number(r.realisedPL || 0)),
+                qty: a.qty + Number(r.quantity || 0),
+                proceeds: a.proceeds + Number(r.proceeds || 0),
+                fee: a.fee + Number(r.fee || 0),
+                realisedPL: a.realisedPL + Number(r.realisedPL || 0),
               };
             },
             { qty: 0, proceeds: 0, fee: 0, realisedPL: 0 }
@@ -169,12 +187,10 @@ export default function LedgerTable({
 
           const isCollapsed = !!collapsed[key];
 
-          // Group header label:
-          // - trades/forex/crypto group by ticker
-          // - dividends could group by ticker (nice)
-          // - cash groups by date (likely)
           const headerTicker =
-            activeTab === "dividends" ? (rows[0]?.ticker || "—") : rows[0]?.ticker;
+            activeTab === "dividends"
+              ? rows[0]?.ticker || "—"
+              : rows[0]?.ticker;
 
           return (
             <React.Fragment key={key}>
@@ -189,19 +205,18 @@ export default function LedgerTable({
 
                 {showTradeCols && (
                   <td>
-                    <strong>{subtotal.qty}</strong>
+                    <strong>{number(subtotal.qty)}</strong>
                   </td>
                 )}
 
                 {showTradeCols && <td></td>}
 
-                <td>{subtotal.proceeds.toFixed(2)}</td>
+                {/* ✅ money formatting with commas */}
+                <td>{money(subtotal.proceeds)}</td>
 
-                {showTradeCols && <td>{subtotal.fee.toFixed(2)}</td>}
+                {showTradeCols && <td>{money(subtotal.fee)}</td>}
 
-                {showTradeCols && (
-                  <td>{subtotal.realisedPL.toFixed(2)}</td>
-                )}
+                {showTradeCols && <td>{money(subtotal.realisedPL)}</td>}
 
                 {showTradeCols && <td></td>}
 
@@ -215,22 +230,16 @@ export default function LedgerTable({
                     {showTicker && <td>{r.ticker || ""}</td>}
                     <td>{r.date}</td>
 
-                    {showTradeCols && <td>{r.quantity}</td>}
-                    {showTradeCols && <td>{r.price}</td>}
+                    {showTradeCols && <td>{number(r.quantity)}</td>}
+                    {showTradeCols && <td>{money(r.price)}</td>}
 
                     <td>
-                      {isCashLike
-                        ? Number(r.amount || 0).toFixed(2)
-                        : Number(r.proceeds || 0).toFixed(2)}
+                      {isCashLike ? money(r.amount) : money(r.proceeds)}
                     </td>
 
-                    {showTradeCols && (
-                      <td>{Number(r.fee || 0).toFixed(2)}</td>
-                    )}
+                    {showTradeCols && <td>{money(r.fee)}</td>}
 
-                    {showTradeCols && (
-                      <td>{Number(r.realisedPL || 0).toFixed(2)}</td>
-                    )}
+                    {showTradeCols && <td>{money(r.realisedPL)}</td>}
 
                     {showTradeCols && (
                       <td>
@@ -265,15 +274,11 @@ export default function LedgerTable({
             <strong>Grand Total ({baseCurrency})</strong>
           </td>
 
-          <td>{Number(grandTotalInBase.proceeds || 0).toFixed(2)}</td>
+          <td>{money(grandTotalInBase.proceeds)}</td>
 
-          {showTradeCols && (
-            <td>{Number(grandTotalInBase.fee || 0).toFixed(2)}</td>
-          )}
+          {showTradeCols && <td>{money(grandTotalInBase.fee)}</td>}
 
-          {showTradeCols && (
-            <td>{Number(grandTotalInBase.realisedPL || 0).toFixed(2)}</td>
-          )}
+          {showTradeCols && <td>{money(grandTotalInBase.realisedPL)}</td>}
 
           <td colSpan="3"></td>
         </tr>
