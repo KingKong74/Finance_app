@@ -9,15 +9,37 @@ function parseNumber(x) {
   return Number.isFinite(n) ? n : 0;
 }
 
-function toIsoFromDmy(dmy) {
-  const s = String(dmy || "").trim();
-  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (!m) return "";
-  const dd = String(m[1]).padStart(2, "0");
-  const mm = String(m[2]).padStart(2, "0");
-  return `${m[3]}-${mm}-${dd}`;
+// Accepts:
+// - DD/MM/YYYY
+// - D/M/YYYY
+// - YYYY-MM-DD
+// - YYYY/MM/DD
+function toIsoAnyDate(input) {
+  const s = String(input || "").trim();
+  if (!s) return "";
+
+  // YYYY-MM-DD or YYYY/MM/DD
+  let m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (m) {
+    const yyyy = m[1];
+    const mm = String(m[2]).padStart(2, "0");
+    const dd = String(m[3]).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  // DD/MM/YYYY (AU style)
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) {
+    const dd = String(m[1]).padStart(2, "0");
+    const mm = String(m[2]).padStart(2, "0");
+    const yyyy = m[3];
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  return "";
 }
 
+// IBKR "Date/Time" can include time
 function toIsoDateTimeFromIbkr(dt) {
   const s = String(dt || "").trim();
   const m = s.match(/^(\d{4}-\d{2}-\d{2})(?:[,\s]+(\d{2}:\d{2}:\d{2}))?/);
@@ -38,10 +60,9 @@ function tickerFromDividendDescription(desc) {
 }
 
 export function parseIbkrActivityStatement(text) {
-  // ⚠️ IBKR exports are often TSV even when called CSV
   const parsed = Papa.parse(String(text || ""), {
     skipEmptyLines: true,
-    delimiter: "", // auto-detect first (change to "\t" if needed)
+    delimiter: "", // auto detect
   });
 
   const rows = parsed.data;
@@ -49,23 +70,18 @@ export function parseIbkrActivityStatement(text) {
   const out = [];
   let idx = 0;
 
-  // ─────────────────────────────
-  // DEBUG counters
-  // ─────────────────────────────
-  let dbg = {
-    sectionsSeen: {},
-    headersSeen: {},
-    dataRowsSeen: {},
+  const dbg = {
     pushed: { trades: 0, forex: 0, cash: 0, dividends: 0 },
+    badCashDates: 0,
+    badDividendDates: 0,
+    sampleBadCash: [],
+    sampleBadDiv: [],
   };
 
   for (const r of rows) {
     const section = String(r?.[0] ?? "").replace(/^\uFEFF/, "").trim();
     const kind = String(r?.[1] ?? "").trim();
-
     if (!section || !kind) continue;
-
-    dbg.sectionsSeen[section] = (dbg.sectionsSeen[section] || 0) + 1;
 
     // Skip totals like: "Dividends Data Total ..."
     const third = String(r?.[2] ?? "").trim();
@@ -73,32 +89,24 @@ export function parseIbkrActivityStatement(text) {
 
     if (kind === "Header") {
       headersBySection[section] = r.slice(2).map((h) => String(h ?? "").trim());
-      dbg.headersSeen[section] = headersBySection[section];
       continue;
     }
 
     if (kind !== "Data") continue;
 
-    dbg.dataRowsSeen[section] = (dbg.dataRowsSeen[section] || 0) + 1;
-
     const header = headersBySection[section] || [];
     const dataCols = r.slice(2);
 
     const obj = {};
-    for (let i = 0; i < header.length; i++) {
-      obj[header[i]] = dataCols[i];
-    }
+    for (let i = 0; i < header.length; i++) obj[header[i]] = dataCols[i];
 
-    // ─────────────────────────────
-    // Trades (Stocks + Forex)
-    // ─────────────────────────────
+    // Trades section
     if (section === "Trades") {
       const assetCat = obj["Asset Category"];
-      const ticker = obj["Symbol"];
-      const currency = obj["Currency"];
-      const dt = obj["Date/Time"];
+      const currency = obj["Currency"] || "";
+      const ticker = obj["Symbol"] || "";
+      const dt = obj["Date/Time"] || "";
       const { date, ts } = toIsoDateTimeFromIbkr(dt);
-
       if (!date || !ticker || !assetCat) continue;
 
       if (assetCat === "Stocks") {
@@ -138,12 +146,18 @@ export function parseIbkrActivityStatement(text) {
       }
     }
 
-    // ─────────────────────────────
-    // Deposits & Withdrawals → cash
-    // ─────────────────────────────
+    // Deposits & Withdrawals -> cash
     if (section === "Deposits & Withdrawals") {
-      const iso = toIsoFromDmy(obj["Settle Date"]);
-      if (!iso) continue;
+      const rawDate = obj["Settle Date"];
+      const iso = toIsoAnyDate(rawDate);
+
+      if (!iso) {
+        dbg.badCashDates++;
+        if (dbg.sampleBadCash.length < 5) {
+          dbg.sampleBadCash.push({ rawDate, row: obj });
+        }
+        continue;
+      }
 
       const amount = parseNumber(obj["Amount"]);
       out.push({
@@ -160,12 +174,18 @@ export function parseIbkrActivityStatement(text) {
       dbg.pushed.cash++;
     }
 
-    // ─────────────────────────────
-    // Dividends → dividends tab
-    // ─────────────────────────────
+    // Dividends -> dividends
     if (section === "Dividends") {
-      const iso = toIsoFromDmy(obj["Date"]);
-      if (!iso) continue;
+      const rawDate = obj["Date"];
+      const iso = toIsoAnyDate(rawDate);
+
+      if (!iso) {
+        dbg.badDividendDates++;
+        if (dbg.sampleBadDiv.length < 5) {
+          dbg.sampleBadDiv.push({ rawDate, row: obj });
+        }
+        continue;
+      }
 
       const amount = parseNumber(obj["Amount"]);
       if (!amount) continue;
@@ -186,15 +206,10 @@ export function parseIbkrActivityStatement(text) {
     }
   }
 
-  // ─────────────────────────────
-  // DEBUG OUTPUT (once per import)
-  // ─────────────────────────────
-  console.groupCollapsed("IBKR IMPORT DEBUG");
-  console.log("Sections seen:", dbg.sectionsSeen);
-  console.log("Headers seen:", dbg.headersSeen);
-  console.log("Data rows seen:", dbg.dataRowsSeen);
+  console.groupCollapsed("IBKR IMPORT DEBUG (dates)");
   console.log("Rows pushed:", dbg.pushed);
-  console.log("First 5 parsed rows:", out.slice(0, 5));
+  console.log("Bad cash dates:", dbg.badCashDates, dbg.sampleBadCash);
+  console.log("Bad dividend dates:", dbg.badDividendDates, dbg.sampleBadDiv);
   console.groupEnd();
 
   return out;
