@@ -55,7 +55,7 @@ function makeTempId(i, tab) {
 
 function tickerFromDividendDescription(desc) {
   const s = String(desc || "");
-  const m = s.match(/^([A-Z0-9.\-]+)\(/i);
+  const m = s.match(/^([A-Z0-9.\-]+)\s*\(/i);
   return m ? m[1].toUpperCase() : "";
 }
 
