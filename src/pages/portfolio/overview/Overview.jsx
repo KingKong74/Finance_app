@@ -1,9 +1,9 @@
 import React, { useState } from "react";
 import "../../../css/overviewTab.css";
 
-import { accounts, overviewTabs } from "./dashboard/overviewData";
+import { accounts, overviewTabs } from "./dashboard/components/overviewData";
 import AccountsPanel from "./components/AccountsPanel";
-import Dashboard from "./dashboard/Dashboard";
+import Dashboard from "./dashboard/DashboardContent";
 import Positions from "./positions/Positions";
 
 

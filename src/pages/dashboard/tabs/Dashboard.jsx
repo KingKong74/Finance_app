@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import StatCard from "../../porfolio/overview/components/StatCard";
+import StatCard from "../../portfolio/overview/components/StatCard";
 import "../../../css/dashboardTab.css";
 
 export default function Dashboard() {

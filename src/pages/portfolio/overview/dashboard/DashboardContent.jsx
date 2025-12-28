@@ -1,3 +1,4 @@
+// DashboardContent.jsx
 import React from "react";
 import OverviewChart from "./components/overviewChart";
 import PortfolioPie from "./components/portfolioPie";
@@ -5,7 +6,7 @@ import PortfolioValue from "./components/portfolioValue";
 import DividendsColumn from "./components/dividendsColumn";
 import CashflowStacked from "./components/cashflowStacked";
 
-export default function Dashboard({
+export default function DashboardContent({
   range,
   onRangeChange,
   selectedAccount,

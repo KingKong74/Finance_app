@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
-import "../../css/porfolio.css";
+import "../../css/portfolio.css";
 import Overview from "./overview/Overview"; 
 import Ledger from "./ledger/Ledger"; 
-import Strategy from "./stratergy/Stratergy";
+import Strategy from "./overview/stratergy/Stratergy";
 
 
 export default function Portfolio() {
