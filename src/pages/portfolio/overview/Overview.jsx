@@ -21,10 +21,42 @@ export default function Overview() {
     { name: "All Accounts", total: 0, cash: 0, pl: 0, dayPL: 0 },
   ]);
 
+  const [fxRates, setFxRates] = useState({ AUD: 1 });
+  const [fxReady, setFxReady] = useState(false);
+
+  // ─────────────────────────────────────────────
+  // 1️⃣ Fetch FX (AUD base, DB-backed)
+  // ─────────────────────────────────────────────
   useEffect(() => {
+    const loadFx = async () => {
+      try {
+        const r = await fetch("/api/fx?base=AUD");
+        if (!r.ok) throw new Error("FX failed");
+        const json = await r.json();
+
+        const rates = { ...(json.rates || {}) };
+        rates.AUD = 1;
+
+        setFxRates(rates);
+        setFxReady(true);
+      } catch (e) {
+        console.warn("FX unavailable, totals may be inaccurate");
+        setFxRates({ AUD: 1 });
+        setFxReady(true);
+      }
+    };
+
+    loadFx();
+  }, []);
+
+  // ─────────────────────────────────────────────
+  // 2️⃣ Build accounts from ledger data
+  // ─────────────────────────────────────────────
+  useEffect(() => {
+    if (!fxReady) return;
+
     const run = async () => {
       try {
-        // Pull trades/crypto/dividends (cash later)
         const [rTrades, rCrypto, rDivs] = await Promise.all([
           fetch("/api/ledger?tab=trades"),
           fetch("/api/ledger?tab=crypto"),
@@ -42,7 +74,7 @@ export default function Overview() {
           ...(Array.isArray(crypto) ? crypto : []),
         ];
 
-        // Normalise trades for FIFO (KEEP broker!)
+        // Normalise trades (broker-aware)
         const normalisedTrades = allTrades
           .map((t) => ({
             broker: String(t.broker || "").trim() || "Unknown",
@@ -57,76 +89,95 @@ export default function Overview() {
           }))
           .filter((t) => t.ticker && t.date);
 
-        normalisedTrades.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+        normalisedTrades.sort((a, b) =>
+          a.date < b.date ? -1 : a.date > b.date ? 1 : 0
+        );
 
-        // Build open positions (broker-aware now)
+        // Build FIFO open positions
         const positions = buildPositionsFIFO(normalisedTrades, {
           useLastTradeAsMarketPrice: true,
         });
 
-        // Fetch prices once for all symbols
-        const symbols = Array.from(new Set(positions.map((p) => p.ticker))).filter(Boolean);
+        // Fetch prices once
+        const symbols = Array.from(
+          new Set(positions.map((p) => p.ticker))
+        ).filter(Boolean);
+
         let priceMap = {};
         if (symbols.length) {
-          const rPrices = await fetch(`/api/prices?symbols=${symbols.join(",")}&ttl=60`);
+          const rPrices = await fetch(
+            `/api/prices?symbols=${symbols.join(",")}&ttl=60`
+          );
           priceMap = rPrices.ok ? await rPrices.json() : {};
         }
 
-        // Market value per broker (AUD base for panel)
+        // ─────────────────────────────────────────
+        // 3️⃣ Market value per broker (AUD)
+        // ─────────────────────────────────────────
         const totalByBroker = new Map();
 
         for (const p of positions) {
           const info = priceMap?.[p.ticker];
-          const px = info?.price != null ? Number(info.price) : Number(p.marketPrice || 0);
-          const mv = px ? Number(p.quantity || 0) * px : 0;
+          const px =
+            info?.price != null
+              ? Number(info.price)
+              : Number(p.marketPrice || 0);
 
-          // convert from trade currency -> AUD for the panel “$”
-          const mvAud = toBase(mv, p.currency, "AUD");
+          if (!px) continue;
+
+          const mv = Number(p.quantity || 0) * px;
+
+          const mvAud = toBase(
+            mv,
+            p.currency,
+            "AUD",
+            fxRates // ✅ THIS WAS THE BUG
+          );
 
           const broker = String(p.broker || "").trim() || "Unknown";
-          totalByBroker.set(broker, (totalByBroker.get(broker) || 0) + mvAud);
+          totalByBroker.set(
+            broker,
+            (totalByBroker.get(broker) || 0) + mvAud
+          );
         }
 
-        // Realised P/L per broker (from trades)
+        // Realised P/L per broker
         const realisedByBroker = new Map();
         for (const t of normalisedTrades) {
-          const broker = t.broker;
-          realisedByBroker.set(broker, (realisedByBroker.get(broker) || 0) + Number(t.realisedPL || 0));
+          realisedByBroker.set(
+            t.broker,
+            (realisedByBroker.get(t.broker) || 0) +
+              Number(t.realisedPL || 0)
+          );
         }
 
-        // Dividends per broker
+        // Dividends per broker (still simple for now)
         const divByBroker = new Map();
         (Array.isArray(divs) ? divs : []).forEach((d) => {
           const broker = String(d.broker || "").trim() || "Unknown";
-          const amt = Number(d.amount || 0);
-
-          // dividends are in their currency; for now we assume AUD base display isn’t perfect.
-          // If you want proper FX conversion here, we can convert like positions.
-          divByBroker.set(broker, (divByBroker.get(broker) || 0) + amt);
+          divByBroker.set(
+            broker,
+            (divByBroker.get(broker) || 0) + Number(d.amount || 0)
+          );
         });
 
-        // Build account list
         const brokers = Array.from(
           new Set([
             ...totalByBroker.keys(),
             ...realisedByBroker.keys(),
             ...divByBroker.keys(),
           ])
-        ).sort((a, b) => a.localeCompare(b));
+        ).sort();
 
-        const brokerAccounts = brokers.map((b) => {
-          const total = Number(totalByBroker.get(b) || 0);
-          const realised = Number(realisedByBroker.get(b) || 0);
-          const dividends = Number(divByBroker.get(b) || 0);
-
-          return {
-            name: b,
-            total,
-            cash: 0, // not yet
-            pl: realised + dividends,
-            dayPL: 0, // later
-          };
-        });
+        const brokerAccounts = brokers.map((b) => ({
+          name: b,
+          total: Number(totalByBroker.get(b) || 0),
+          cash: 0,
+          pl:
+            Number(realisedByBroker.get(b) || 0) +
+            Number(divByBroker.get(b) || 0),
+          dayPL: 0,
+        }));
 
         const all = brokerAccounts.reduce(
           (acc, a) => {
@@ -141,7 +192,6 @@ export default function Overview() {
 
         setAccounts([all, ...brokerAccounts]);
 
-        // if selected broker disappeared, snap back
         if (![all.name, ...brokers].includes(selectedAccount)) {
           setSelectedAccount("All Accounts");
         }
@@ -151,8 +201,7 @@ export default function Overview() {
     };
 
     run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fxReady, fxRates, selectedAccount]);
 
   const activeAccount = useMemo(
     () => accounts.find((a) => a.name === selectedAccount) || accounts[0],
@@ -160,9 +209,9 @@ export default function Overview() {
   );
 
   const rateOfReturn = useMemo(() => {
-    const base = Number(activeAccount.total || 0) - Number(activeAccount.pl || 0);
+    const base = activeAccount.total - activeAccount.pl;
     if (!base) return 0;
-    return (Number(activeAccount.pl || 0) / base) * 100;
+    return (activeAccount.pl / base) * 100;
   }, [activeAccount]);
 
   return (
@@ -170,7 +219,7 @@ export default function Overview() {
       <AccountsPanel
         accounts={accounts}
         panelOpen={panelOpen}
-        onTogglePanel={() => setPanelOpen((prev) => !prev)}
+        onTogglePanel={() => setPanelOpen((p) => !p)}
         selectedAccount={selectedAccount}
         setSelectedAccount={setSelectedAccount}
         expandedAccount={expandedAccount}
@@ -182,7 +231,9 @@ export default function Overview() {
           {overviewTabs.map((tab) => (
             <button
               key={tab}
-              className={`overview-tab ${overviewTab === tab ? "active" : ""}`}
+              className={`overview-tab ${
+                overviewTab === tab ? "active" : ""
+              }`}
               onClick={() => setOverviewTab(tab)}
             >
               {tab}
@@ -202,9 +253,12 @@ export default function Overview() {
 
         {overviewTab === "Positions" && <Positions />}
 
-        {overviewTab !== "Dashboard" && overviewTab !== "Positions" && (
-          <p style={{ padding: "2rem" }}>{overviewTab} content coming soon</p>
-        )}
+        {overviewTab !== "Dashboard" &&
+          overviewTab !== "Positions" && (
+            <p style={{ padding: "2rem" }}>
+              {overviewTab} content coming soon
+            </p>
+          )}
       </section>
     </div>
   );
