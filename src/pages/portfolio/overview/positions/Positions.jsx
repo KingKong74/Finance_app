@@ -1,3 +1,4 @@
+// src/pages/portfolio/overview/positions/Positions.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import "../../../../css/positionsTab.css";
 
@@ -10,30 +11,49 @@ const useLastTradeAsMarketPrice = true;
 export default function Positions() {
   const [rows, setRows] = useState([]);
   const [cashRows, setCashRows] = useState([]);
+
+  // ✅ dropdown selection
   const [displayCurrency, setDisplayCurrency] = useState("MARKET");
+
+  // ✅ live FX from /api/fx (AUD base)
   const [fxRates, setFxRates] = useState({ AUD: 1 });
+
   const [loading, setLoading] = useState(true);
 
-  /* ──────────────────────────────
-     Load FX (AUD base, cached API)
-  ────────────────────────────── */
+  // ✅ Load FX (live + DB cache fallback handled by /api/fx)
   useEffect(() => {
     const loadFx = async () => {
       try {
-        const r = await fetch("/api/fx");
+        const r = await fetch("/api/fx?base=AUD");
         if (!r.ok) throw new Error("fx failed");
         const json = await r.json();
-        setFxRates(json?.rates || { AUD: 1 });
-      } catch {
+        const rates = json?.rates && typeof json.rates === "object" ? json.rates : {};
+        // ensure AUD exists
+        if (!rates.AUD) rates.AUD = 1;
+        setFxRates(rates);
+      } catch (e) {
+        console.warn("FX fetch failed, falling back to AUD only.", e);
         setFxRates({ AUD: 1 });
       }
     };
     loadFx();
   }, []);
 
-  /* ──────────────────────────────
-     Load trades + crypto + cash
-  ────────────────────────────── */
+  // ✅ Your requirement: only Market | AUD | USD | EUR
+  const currencyOptions = useMemo(() => {
+    const want = ["AUD", "USD", "EUR"];
+    const available = new Set(Object.keys(fxRates || {}).map((k) => String(k).toUpperCase()));
+    const filtered = want.filter((c) => available.has(c));
+    // always allow AUD even if missing (shouldn't be)
+    if (!filtered.includes("AUD")) filtered.unshift("AUD");
+    return ["MARKET", ...filtered];
+  }, [fxRates]);
+
+  // ✅ Guard: if current selection becomes unavailable, reset to MARKET
+  useEffect(() => {
+    if (!currencyOptions.includes(displayCurrency)) setDisplayCurrency("MARKET");
+  }, [currencyOptions, displayCurrency]);
+
   useEffect(() => {
     const run = async () => {
       try {
@@ -64,33 +84,32 @@ export default function Positions() {
             quantity: Number(t.quantity || 0),
             price: Number(t.price || 0),
             fee: Number(t.fee || 0),
-            currency: String(t.currency || "USD"),
+            currency: String(t.currency || "USD").toUpperCase(),
             type: t.type || "trades",
           }))
-          .filter((t) => t.ticker && t.date)
-          .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+          .filter((t) => t.ticker && t.date);
+
+        normalised.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
         const positions = buildPositionsFIFO(normalised, {
           useLastTradeAsMarketPrice,
         });
 
-        /* ── Live prices (with DB cache fallback) ── */
         const symbols = Array.from(
-          new Set(positions.map((p) => p.ticker))
+          new Set(positions.map((p) => String(p.ticker || "").toUpperCase()))
         ).filter(Boolean);
 
         let priceMap = {};
-        if (symbols.length) {
-          const rPrices = await fetch(
-            `/api/prices?symbols=${symbols.join(",")}&ttl=60`
-          );
+        if (symbols.length > 0) {
+          const rPrices = await fetch(`/api/prices?symbols=${symbols.join(",")}&ttl=60`);
           const data = rPrices.ok ? await safeJson(rPrices) : null;
           priceMap = data && typeof data === "object" ? data : {};
         }
 
         const mergedPositions = positions.map((p) => {
-          const info = priceMap[p.ticker];
-          if (info?.price != null) {
+          const info = priceMap?.[p.ticker];
+
+          if (info && info.price != null) {
             return {
               ...p,
               marketPrice: Number(info.price),
@@ -98,6 +117,7 @@ export default function Positions() {
               marketSource: info.source || "cache",
             };
           }
+
           return {
             ...p,
             marketAsOf: null,
@@ -106,7 +126,8 @@ export default function Positions() {
         });
 
         const cashNormalised = (Array.isArray(cash) ? cash : []).map((c) => ({
-          currency: String(c.currency || "AUD"),
+          date: String(c.date || ""),
+          currency: String(c.currency || "AUD").toUpperCase(),
           entryType: String(c.entryType || "deposit"),
           amount: Number(c.amount || 0),
         }));
@@ -125,19 +146,17 @@ export default function Positions() {
     run();
   }, []);
 
-  /* ──────────────────────────────
-     Currency conversion layer
-  ────────────────────────────── */
   const rowsWithDisplay = useMemo(() => {
     return rows.map((p) => {
-      const marketValue =
-        p.marketPrice != null ? p.quantity * p.marketPrice : null;
-      const unrealised =
-        marketValue != null ? marketValue - p.costBasis : null;
+      const marketValue = p.marketPrice != null ? p.quantity * p.marketPrice : null;
+      const unrealised = marketValue != null ? marketValue - p.costBasis : null;
 
+      // MARKET mode: show everything in trade currency
       if (displayCurrency === "MARKET") {
         return {
           ...p,
+          marketValue,
+          unrealised,
           mvDisplay: marketValue,
           cbDisplay: p.costBasis,
           upnlDisplay: unrealised,
@@ -145,31 +164,31 @@ export default function Positions() {
         };
       }
 
+      // Fixed currency mode: convert from trade currency -> display currency using live fxRates
+      const mvDisplay =
+        marketValue == null ? null : toBase(marketValue, p.currency, displayCurrency, fxRates);
+      const cbDisplay = toBase(p.costBasis, p.currency, displayCurrency, fxRates);
+      const upnlDisplay =
+        unrealised == null ? null : toBase(unrealised, p.currency, displayCurrency, fxRates);
+
       return {
         ...p,
-        mvDisplay:
-          marketValue == null
-            ? null
-            : toBase(marketValue, p.currency, displayCurrency, fxRates),
-        cbDisplay: toBase(p.costBasis, p.currency, displayCurrency, fxRates),
-        upnlDisplay:
-          unrealised == null
-            ? null
-            : toBase(unrealised, p.currency, displayCurrency, fxRates),
+        marketValue,
+        unrealised,
+        mvDisplay,
+        cbDisplay,
+        upnlDisplay,
         displayCcy: displayCurrency,
       };
     });
   }, [rows, displayCurrency, fxRates]);
 
-  /* ──────────────────────────────
-     Render
-  ────────────────────────────── */
   return (
     <div className="positions-page">
       <div className="positions-header">
         <h2 className="positions-title">Positions</h2>
 
-        {/* ✅ Currency dropdown restored */}
+        {/* ✅ restored dropdown, limited to MARKET/AUD/USD/EUR */}
         <div className="positions-controls">
           <label className="currency-pill">
             P/L currency:&nbsp;
@@ -177,7 +196,7 @@ export default function Positions() {
               value={displayCurrency}
               onChange={(e) => setDisplayCurrency(e.target.value)}
             >
-              {DISPLAY_OPTIONS(fxRates).map((c) => (
+              {currencyOptions.map((c) => (
                 <option key={c} value={c}>
                   {c === "MARKET" ? "Market currency" : c}
                 </option>
@@ -198,11 +217,7 @@ export default function Positions() {
                 <th className="num">Avg. Price</th>
                 <th className="num">Cost Basis</th>
                 <th className="num">
-                  Unrealised P&amp;L (
-                  {displayCurrency === "MARKET"
-                    ? "Market"
-                    : displayCurrency}
-                  )
+                  Unrealised P&amp;L ({displayCurrency === "MARKET" ? "Market" : displayCurrency})
                 </th>
               </tr>
             </thead>
@@ -210,25 +225,17 @@ export default function Positions() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="positions-empty">
-                    Loading…
-                  </td>
+                  <td colSpan={6} className="positions-empty">Loading…</td>
                 </tr>
               ) : rowsWithDisplay.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="positions-empty">
-                    No positions yet.
-                  </td>
+                  <td colSpan={6} className="positions-empty">No positions yet.</td>
                 </tr>
               ) : (
                 rowsWithDisplay.map((p) => {
                   const pnl = p.upnlDisplay;
-                  const pnlClass =
-                    pnl == null ? "" : pnl > 0 ? "pos" : pnl < 0 ? "neg" : "";
-                  const badge = priceBadgeLabel(
-                    p.marketSource,
-                    p.marketAsOf
-                  );
+                  const pnlClass = pnl == null ? "" : pnl > 0 ? "pos" : pnl < 0 ? "neg" : "";
+                  const badge = priceBadgeLabel(p.marketSource, p.marketAsOf);
 
                   return (
                     <tr key={`${p.broker}_${p.ticker}_${p.currency}_${p.type}`}>
@@ -236,8 +243,18 @@ export default function Positions() {
                         <div className="instrument">
                           <span className="instrument-ticker">{p.ticker}</span>
                           <span className="instrument-meta">
-                            {String(p.type).toUpperCase()} · {p.currency} ·{" "}
-                            <span className={`price-badge`}>
+                            {String(p.type || "").toUpperCase()} · {p.currency} ·{" "}
+                            <span
+                              className={`price-badge ${
+                                badge.includes("LIVE")
+                                  ? "live"
+                                  : badge.includes("CACHED")
+                                  ? "cached"
+                                  : badge.includes("DELAYED")
+                                  ? "delayed"
+                                  : "last"
+                              }`}
+                            >
                               {badge}
                             </span>
                           </span>
@@ -245,33 +262,26 @@ export default function Positions() {
                       </td>
 
                       <td className="num">{fmtNum(p.quantity, 6)}</td>
+
                       <td className="num">
-                        {p.mvDisplay == null
-                          ? "—"
-                          : fmtMoney(p.mvDisplay, p.displayCcy)}
+                        {p.mvDisplay == null ? "—" : fmtMoney(p.mvDisplay, p.displayCcy)}
                       </td>
+
                       <td className="num">
                         {p.avgPrice == null
                           ? "—"
                           : fmtMoney(
                               displayCurrency === "MARKET"
                                 ? p.avgPrice
-                                : toBase(
-                                    p.avgPrice,
-                                    p.currency,
-                                    displayCurrency,
-                                    fxRates
-                                  ),
+                                : toBase(p.avgPrice, p.currency, displayCurrency, fxRates),
                               p.displayCcy
                             )}
                       </td>
-                      <td className="num">
-                        {fmtMoney(p.cbDisplay, p.displayCcy)}
-                      </td>
+
+                      <td className="num">{fmtMoney(p.cbDisplay, p.displayCcy)}</td>
+
                       <td className={`num ${pnlClass}`}>
-                        {pnl == null
-                          ? "—"
-                          : fmtMoney(pnl, p.displayCcy)}
+                        {pnl == null ? "—" : fmtMoney(pnl, p.displayCcy)}
                       </td>
                     </tr>
                   );
@@ -280,9 +290,12 @@ export default function Positions() {
             </tbody>
           </table>
         </div>
+
+        <p className="positions-note">
+          Prices try LIVE first, then fall back to your cached DB price, then (if needed) last trade price.
+        </p>
       </div>
 
-      {/* ── Cash ── */}
       <div className="cash-card">
         <h3 className="cash-title">Cash holdings</h3>
 
@@ -301,13 +314,19 @@ export default function Positions() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={3} className="positions-empty">
+                  <td
+                    colSpan={displayCurrency !== "MARKET" ? 3 : 2}
+                    className="positions-empty"
+                  >
                     Loading…
                   </td>
                 </tr>
               ) : cashRows.length === 0 ? (
                 <tr>
-                  <td colSpan={3} className="positions-empty">
+                  <td
+                    colSpan={displayCurrency !== "MARKET" ? 3 : 2}
+                    className="positions-empty"
+                  >
                     No cash entries yet.
                   </td>
                 </tr>
@@ -315,18 +334,11 @@ export default function Positions() {
                 cashRows.map((c) => (
                   <tr key={c.currency}>
                     <td>{c.currency}</td>
-                    <td className="num">
-                      {fmtMoney(c.balance, c.currency)}
-                    </td>
+                    <td className="num">{fmtMoney(c.balance, c.currency)}</td>
                     {displayCurrency !== "MARKET" && (
                       <td className="num">
                         {fmtMoney(
-                          toBase(
-                            c.balance,
-                            c.currency,
-                            displayCurrency,
-                            fxRates
-                          ),
+                          toBase(c.balance, c.currency, displayCurrency, fxRates),
                           displayCurrency
                         )}
                       </td>
