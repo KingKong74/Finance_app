@@ -19,94 +19,6 @@ function num(x) {
   return Number.isFinite(n) ? n : 0;
 }
 
-function computeFxPositionAndUpnlAud(forexTrades, fxRates, broker) {
-  // AUD.USD:
-  // qty = AUD amount (signed), price = USD per AUD
-  // proceeds = -(qty*price) in USD
-  const r = fxRates || {};
-  const lots = []; // USD lots: [{ usd, costAud }]
-  const bKey = safeUpper(broker);
-
-  const trades = (Array.isArray(forexTrades) ? forexTrades : [])
-    .filter(
-      (t) => safeUpper(t.type) === "FOREX" || safeUpper(t.type) === "forex"
-    )
-    .filter((t) => safeUpper(t.ticker) === "AUD.USD")
-    .filter((t) => safeUpper(t.broker) === bKey)
-    .map((t) => {
-      const qtyAud = num(t.quantity);
-      const price = num(t.price);
-      const proceedsUsd =
-        t.proceeds != null ? num(t.proceeds) : -(qtyAud * price);
-
-      const fee = num(t.fee);
-      const feeCurrency = safeUpper(t.feeCurrency || "AUD");
-
-      return {
-        date: String(t.date || ""),
-        ts: String(t.ts || ""),
-        qtyAud,
-        proceedsUsd,
-        fee,
-        feeCurrency,
-      };
-    })
-    .filter((t) => t.date);
-
-  trades.sort((a, b) => {
-    const ka = a.ts || `${a.date}T00:00:00`;
-    const kb = b.ts || `${b.date}T00:00:00`;
-    return ka < kb ? -1 : ka > kb ? 1 : 0;
-  });
-
-  for (const t of trades) {
-    const feeAud =
-      t.feeCurrency === "AUD"
-        ? t.fee
-        : toBase(t.fee, t.feeCurrency, "AUD", r);
-
-    if (t.qtyAud < 0) {
-      // sell AUD, receive USD => BUY USD lot
-      const usdBought = Math.max(0, t.proceedsUsd);
-      const audCost = Math.abs(t.qtyAud) + feeAud;
-
-      if (usdBought > 0) lots.push({ usd: usdBought, costAud: audCost });
-      continue;
-    }
-
-    if (t.qtyAud > 0) {
-      // buy AUD, spend USD => SELL USD lots FIFO
-      const usdSpent = Math.max(0, -t.proceedsUsd);
-      let remaining = usdSpent;
-
-      while (remaining > 1e-12 && lots.length) {
-        const lot = lots[0];
-        const take = Math.min(remaining, lot.usd);
-
-        const lotUsdBefore = lot.usd;
-        lot.usd -= take;
-
-        const ratio = take / (lotUsdBefore || 1);
-        lot.costAud -= lot.costAud * ratio;
-
-        remaining -= take;
-
-        if (lot.usd <= 1e-12) lots.shift();
-      }
-
-      // fee drags remaining position (approx)
-      if (feeAud > 0 && lots.length) lots[0].costAud += feeAud;
-    }
-  }
-
-  const usdOpen = lots.reduce((a, l) => a + l.usd, 0);
-  const costAudOpen = lots.reduce((a, l) => a + l.costAud, 0);
-  const valueAudOpen = toBase(usdOpen, "USD", "AUD", r);
-  const upnlAud = valueAudOpen - costAudOpen;
-
-  return { usdOpen, upnlAud };
-}
-
 export default function Overview() {
   const [range, setRange] = useState("YTD");
   const [selectedAccount, setSelectedAccount] = useState("All Accounts");
@@ -121,7 +33,7 @@ export default function Overview() {
   useEffect(() => {
     const run = async () => {
       try {
-        // FX rates (AUD base) — from your cached API
+        // FX rates (AUD base) — from cached API (live + DB fallback)
         const rFx = await fetch("/api/fx?base=AUD&ttl=21600");
         const fxJson = rFx.ok ? await rFx.json() : null;
         const fxRates =
@@ -145,7 +57,9 @@ export default function Overview() {
           rDivs.ok ? rDivs.json() : [],
         ]);
 
-        // ---- POSITIONS (exclude forex conversions) ----
+        // -----------------------------
+        // 1) POSITIONS (exclude FOREX)
+        // -----------------------------
         const allTradeRows = [
           ...(Array.isArray(trades) ? trades : []),
           ...(Array.isArray(crypto) ? crypto : []),
@@ -172,7 +86,7 @@ export default function Overview() {
           useLastTradeAsMarketPrice: true,
         });
 
-        // prices
+        // Prices for open positions
         const symbols = Array.from(new Set(positions.map((p) => p.ticker))).filter(Boolean);
         let priceMap = {};
         if (symbols.length) {
@@ -180,12 +94,13 @@ export default function Overview() {
           priceMap = rPrices.ok ? await rPrices.json() : {};
         }
 
-        // broker aggregates
+        // Aggregate positions per broker: MV + UPNL (AUD)
         const posAgg = new Map(); // broker -> { mvAud, upnlAud }
 
         for (const p of positions) {
           const broker = String(p.broker || "").trim() || "Unknown";
           const info = priceMap?.[p.ticker];
+
           const px = info?.price != null ? num(info.price) : num(p.marketPrice);
           const mv = px ? num(p.quantity) * px : 0;
 
@@ -199,11 +114,11 @@ export default function Overview() {
           posAgg.set(broker, cur);
         }
 
-        // ---- CASH (derived) ----
-        // IMPORTANT: for now we DO NOT add dividends into cash
-        // because it’s the most common reason for “cash feels too high”.
-        // (We’ll add a dedicated “Income” metric later.)
-        const cashByBroker = new Map(); // broker -> { CCY: bal }
+        // ------------------------------------
+        // 2) CASH (derived cash basket by CCY)
+        // ------------------------------------
+        // We build a basket per broker: { AUD: x, USD: y, EUR: z }
+        const cashByBroker = new Map();
 
         const addCash = (broker, ccy, delta) => {
           const b = String(broker || "").trim() || "Unknown";
@@ -213,17 +128,27 @@ export default function Overview() {
           obj[C] = num(obj[C]) + num(delta);
         };
 
-        // cash entries (deposits/withdrawals, etc)
+        // A) cash entries (deposit/withdrawal) — IMPORTANT: apply sign
         (Array.isArray(cash) ? cash : []).forEach((c) => {
-          addCash(c.broker, c.currency, num(c.amount));
+          const entryType = safeUpper(c.entryType || "DEPOSIT");
+          const amt = num(c.amount);
+
+          const signed =
+            entryType === "WITHDRAWAL" ? -Math.abs(amt) : Math.abs(amt);
+
+          addCash(c.broker, c.currency, signed);
         });
 
-        // trade proceeds + fees (no realised PL)
+        // B) trades + crypto cashflows (proceeds already signed in your DB)
         const applyTradeRowToCash = (t) => {
           const broker = t.broker;
           const ccy = t.currency || "USD";
+
           const proceeds =
-            t.proceeds != null ? num(t.proceeds) : -(num(t.quantity) * num(t.price));
+            t.proceeds != null
+              ? num(t.proceeds)
+              : -(num(t.quantity) * num(t.price));
+
           addCash(broker, ccy, proceeds);
 
           const fee = num(t.fee);
@@ -233,21 +158,26 @@ export default function Overview() {
         (Array.isArray(trades) ? trades : []).forEach(applyTradeRowToCash);
         (Array.isArray(crypto) ? crypto : []).forEach(applyTradeRowToCash);
 
-        // forex legs affect cash:
-        // USD leg = proceeds (USD cashflow)
-        // AUD leg = quantity (AUD amount)
+        // C) forex legs (AUD + USD)
+        // AUD.USD: qty = AUD signed, proceeds = USD signed (in your DB it looks consistent)
         (Array.isArray(forex) ? forex : []).forEach((t) => {
           const broker = t.broker;
+
+          const qtyAud = num(t.quantity);
           const proceedsUsd =
-            t.proceeds != null ? num(t.proceeds) : -(num(t.quantity) * num(t.price));
+            t.proceeds != null ? num(t.proceeds) : -(qtyAud * num(t.price));
+
+          addCash(broker, "AUD", qtyAud);
           addCash(broker, "USD", proceedsUsd);
-          addCash(broker, "AUD", num(t.quantity));
 
           const fee = num(t.fee);
           if (fee) addCash(broker, t.feeCurrency || "AUD", -fee);
         });
 
-        // convert cash baskets to AUD totals
+        // D) dividends NOT included in cash (for now)
+        // (Array.isArray(divs) ? divs : []).forEach(() => {})
+
+        // Convert each broker basket into an AUD total
         const cashAudByBroker = new Map();
         for (const [broker, basket] of cashByBroker.entries()) {
           let aud = 0;
@@ -257,23 +187,11 @@ export default function Overview() {
           cashAudByBroker.set(broker, aud);
         }
 
-        // ---- FX UNREALISED (AUD) ----
-        const fxUpnlAudByBroker = new Map();
-        const fxUsdOpenByBroker = new Map();
-
-        const forexBrokers = Array.from(
-          new Set((Array.isArray(forex) ? forex : []).map((t) => String(t.broker || "").trim() || "Unknown"))
-        );
-
-        for (const b of forexBrokers) {
-          const { usdOpen, upnlAud } = computeFxPositionAndUpnlAud(forex, fxRates, b);
-          fxUsdOpenByBroker.set(b, usdOpen);
-          fxUpnlAudByBroker.set(b, upnlAud);
-        }
-
-        // ---- BUILD ACCOUNTS ----
+        // ------------------------------------
+        // 3) BUILD ACCOUNTS (Panel)
+        // ------------------------------------
         const brokers = Array.from(
-          new Set([...posAgg.keys(), ...cashAudByBroker.keys(), ...fxUpnlAudByBroker.keys()])
+          new Set([...posAgg.keys(), ...cashAudByBroker.keys()])
         ).sort((a, b) => a.localeCompare(b));
 
         const brokerAccounts = brokers.map((b) => {
@@ -282,25 +200,37 @@ export default function Overview() {
 
           const cashAud = num(cashAudByBroker.get(b) || 0);
 
-          const fxUpnlAud = num(fxUpnlAudByBroker.get(b) || 0);
-
-          // P/L = unrealised only (positions + FX)
-          const plAud = posUpnlAud + fxUpnlAud;
-
           return {
             name: b,
             total: positionsMvAud + cashAud,
             cash: cashAud,
-            pl: plAud,
+            // ✅ P/L = unrealised positions only (no FX unrealised, no realised)
+            pl: posUpnlAud,
             dayPL: 0,
             debug: {
+              fxProvider: fxJson?.provider || "",
+              fxFetchedAt: fxJson?.fetchedAt || "",
               positionsMvAud,
-              cashAud,
-              fxUpnlAud,
               posUpnlAud,
-              fxUsdOpen: num(fxUsdOpenByBroker.get(b) || 0),
               cashByCcy: cashByBroker.get(b) || {},
-              // divsCount: (Array.isArray(divs) ? divs : []).filter((d) => safeUpper(d.broker) === safeUpper(b)).length,
+              cashAud,
+              cashInputs: {
+                cashEntriesCount: Array.isArray(cash)
+                  ? cash.filter((x) => safeUpper(x.broker) === safeUpper(b)).length
+                  : 0,
+                tradeRowsCount: Array.isArray(trades)
+                  ? trades.filter((x) => safeUpper(x.broker) === safeUpper(b)).length
+                  : 0,
+                cryptoRowsCount: Array.isArray(crypto)
+                  ? crypto.filter((x) => safeUpper(x.broker) === safeUpper(b)).length
+                  : 0,
+                forexRowsCount: Array.isArray(forex)
+                  ? forex.filter((x) => safeUpper(x.broker) === safeUpper(b)).length
+                  : 0,
+                // dividendsCount: Array.isArray(divs)
+                //   ? divs.filter((x) => safeUpper(x.broker) === safeUpper(b)).length
+                //   : 0,
+              },
             },
           };
         });
@@ -316,22 +246,19 @@ export default function Overview() {
           { name: "All Accounts", total: 0, cash: 0, pl: 0, dayPL: 0 }
         );
 
-        // Build a combined debug for "All Accounts"
         const allDebug = brokerAccounts.reduce(
           (d, a) => {
             d.positionsMvAud += num(a.debug?.positionsMvAud);
-            d.cashAud += num(a.debug?.cashAud);
-            d.fxUpnlAud += num(a.debug?.fxUpnlAud);
             d.posUpnlAud += num(a.debug?.posUpnlAud);
-            d.fxUsdOpen += num(a.debug?.fxUsdOpen);
-            // merge cashByCcy
+            d.cashAud += num(a.debug?.cashAud);
+
             const basket = a.debug?.cashByCcy || {};
             for (const [ccy, bal] of Object.entries(basket)) {
               d.cashByCcy[ccy] = num(d.cashByCcy[ccy]) + num(bal);
             }
             return d;
           },
-          { positionsMvAud: 0, cashAud: 0, fxUpnlAud: 0, posUpnlAud: 0, fxUsdOpen: 0, cashByCcy: {} }
+          { positionsMvAud: 0, posUpnlAud: 0, cashAud: 0, cashByCcy: {} }
         );
 
         setAccounts([{ ...all, debug: allDebug }, ...brokerAccounts]);
@@ -339,6 +266,10 @@ export default function Overview() {
         if (![all.name, ...brokers].includes(selectedAccount)) {
           setSelectedAccount("All Accounts");
         }
+
+        // Optional console debug (super handy)
+        // eslint-disable-next-line no-console
+        console.log("Accounts debug:", [{ ...all, debug: allDebug }, ...brokerAccounts]);
       } catch (e) {
         console.error("Overview accounts build failed:", e);
       }
