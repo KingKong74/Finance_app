@@ -1,5 +1,5 @@
 // /api/overview/cash-report.js
-import { connectToDB } from "./utils/db.js";
+import { connectToDB } from "../utils/db.js";
 
 function normUpper(x) {
   return String(x || "").trim().toUpperCase();
