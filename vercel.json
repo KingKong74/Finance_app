@@ -1,14 +1,14 @@
 {
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" },
-    { "source": "/(.*)", "destination": "/" },
-    { "source": "/api/:path*", "destination": "/api/index" }
+    { "source": "/api/:action", "destination": "/api/index?action=:action" },
+    { "source": "/api/:action/:sub*", "destination": "/api/index?action=:action&sub=:sub*" },
+
+    { "source": "/(.*)", "destination": "/" }
   ],
   "crons": [
     {
-      "path": "/api/prices/refresh?secret=@cron_secret",
+      "path": "/api/index?action=prices&sub=refresh&secret=@cron_secret",
       "schedule": "10 6 * * 1-5"
     }
   ]
 }
-

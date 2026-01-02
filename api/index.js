@@ -1,88 +1,76 @@
-// /api/index.js
-import path from "path";
-import { pathToFileURL } from "url";
-import fs from "fs";
+// /api/index.js  (the ONLY file in /api)
+import fx from "../server_api/fx.js";
 
-function getOriginalUrl(req) {
-  return (
-    req.headers["x-vercel-original-url"] ||
-    req.headers["x-original-uri"] ||
-    req.url ||
-    "/"
-  );
-}
+import ledgerIndex from "../server_api/ledger/index.js";
+import ledgerImport from "../server_api/ledger/import.js";
+import ledgerImportPreview from "../server_api/ledger/importPreview.js";
+import ledgerId from "../server_api/ledger/[id].js";
 
-function normaliseApiPath(p) {
-  // Expect "/api/...."
-  if (!p.startsWith("/api")) return null;
+import pricesIndex from "../server_api/prices/index.js";
+import pricesRefresh from "../server_api/prices/refresh.js";
 
-  // Strip "/api"
-  let rest = p.slice(4); // "" or "/ledger/import"
-  if (!rest) rest = "/";
+import overviewAccount from "../server_api/overview/account.js";
+import overviewCashReport from "../server_api/overview/cash-report.js";
 
-  // Remove trailing slash (except "/")
-  if (rest.length > 1 && rest.endsWith("/")) rest = rest.slice(0, -1);
+const table = {
+  fx,
 
-  return rest; // "/" or "/ledger/import"
-}
+  // ledger
+  "ledger": ledgerIndex,
+  "ledger/import": ledgerImport,
+  "ledger/importPreview": ledgerImportPreview,
+  "ledger/[id]": ledgerId,
 
-function send404(res, p) {
-  return res.status(404).json({ error: `No route for ${p}` });
+  // prices
+  "prices": pricesIndex,
+  "prices/refresh": pricesRefresh,
+
+  // overview
+  "overview/account": overviewAccount,
+  "overview/cash-report": overviewCashReport,
+};
+
+function pickKey(action, sub) {
+  const a = String(action || "").trim();
+  const s = String(sub || "").trim(); // can be "import" or "abc123"
+  if (!a) return "";
+
+  if (!s) return a;
+
+  // exact match first (eg ledger/import)
+  const exact = `${a}/${s}`;
+  if (table[exact]) return exact;
+
+  // dynamic id support: /api/ledger/<id> -> ledger/[id]
+  if (a === "ledger" && s && !s.includes("/")) return "ledger/[id]";
+
+  return exact;
 }
 
 export default async function handler(req, res) {
   try {
-    const originalUrl = getOriginalUrl(req);
-    const host = req.headers.host || "localhost";
-    const url = new URL(originalUrl, `http://${host}`);
-    const pathname = url.pathname;
+    const action = String(req.query.action || "");
+    const sub = String(req.query.sub || ""); // may be "import" or "abc123" etc
 
-    const rest = normaliseApiPath(pathname);
-    if (rest == null) return send404(res, pathname);
+    const key = pickKey(action, sub);
+    const fn = table[key];
 
-    // Build possible file targets inside /server_api
-    // Example: /api/ledger/import -> /server_api/ledger/import.js
-    // Example: /api/ledger/abc123 -> /server_api/ledger/[id].js  (fallback)
-    const serverRoot = path.join(process.cwd(), "server_api");
-
-    const directFile = path.join(serverRoot, `${rest}.js`);          // /ledger/import.js
-    const directIndex = path.join(serverRoot, rest, "index.js");     // /ledger/index.js
-
-    let target = null;
-
-    if (fs.existsSync(directFile)) target = directFile;
-    else if (fs.existsSync(directIndex)) target = directIndex;
-    else {
-      // fallback for dynamic [id].js in a folder
-      // /api/ledger/<id> => /server_api/ledger/[id].js
-      const parts = rest.split("/").filter(Boolean); // ["ledger", "abc123"]
-      if (parts.length >= 2) {
-        const folder = parts[0];
-        const id = parts[1];
-
-        const dyn = path.join(serverRoot, folder, "[id].js");
-        if (fs.existsSync(dyn)) {
-          // Ensure req.query exists and set id like Next does
-          req.query = req.query || {};
-          req.query.id = id;
-          target = dyn;
-        }
-      }
+    if (!fn) {
+      return res.status(404).json({
+        error: `Unknown route`,
+        got: { action, sub, key },
+        allowed: Object.keys(table),
+      });
     }
 
-    if (!target) return send404(res, pathname);
-
-    // Dynamically import the handler module
-    const mod = await import(pathToFileURL(target).href);
-    const fn = mod?.default;
-
-    if (typeof fn !== "function") {
-      return res.status(500).json({ error: `Handler missing default export for ${target}` });
+    // If dynamic ledger id route, attach req.query.id
+    if (key === "ledger/[id]") {
+      req.query.id = sub;
     }
 
-    return fn(req, res);
+    return await fn(req, res);
   } catch (e) {
-    console.error("API auto-router error:", e);
-    return res.status(500).json({ error: "API router failed" });
+    console.error("Admin router error:", e);
+    return res.status(500).json({ error: e.message || "Server error" });
   }
 }
