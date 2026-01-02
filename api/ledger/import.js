@@ -1,3 +1,4 @@
+// /api/ledger/import.js
 import { connectToDB } from "../utils/db.js";
 
 function isIsoDate(s) {
@@ -14,6 +15,7 @@ function normStr(x) {
   return String(x || "").trim();
 }
 function normNum(x) {
+  if (typeof x === "string") x = x.replace(/,/g, ""); // handle "1,706.13"
   const n = Number(x);
   return Number.isFinite(n) ? n : 0;
 }
@@ -36,7 +38,7 @@ function deriveTs(r) {
 function makeImportKey(r) {
   const tab = normStr(r.tab).toLowerCase();
   const broker = normUpper(r.broker || "IBKR");
-  const account = normStr(r.account || ""); // future-proof
+  const account = normStr(r.account || "");
   const tsOrDate = deriveTs(r) || deriveDate(r);
   const currency = normStr(r.currency || "");
 
@@ -63,15 +65,13 @@ function makeImportKey(r) {
 }
 
 async function ensureIndexes(db) {
-  // unique per collection
   await db.collection("trades").createIndex({ importKey: 1 }, { unique: true, sparse: true });
   await db.collection("cash").createIndex({ importKey: 1 }, { unique: true, sparse: true });
   await db.collection("dividends").createIndex({ importKey: 1 }, { unique: true, sparse: true });
 
-  // helpful query indexes
-  await db.collection("trades").createIndex({ date: 1, ticker: 1 });
-  await db.collection("cash").createIndex({ date: 1, entryType: 1 });
-  await db.collection("dividends").createIndex({ date: 1, ticker: 1 });
+  await db.collection("trades").createIndex({ date: 1, ticker: 1, broker: 1 });
+  await db.collection("cash").createIndex({ date: 1, entryType: 1, broker: 1 });
+  await db.collection("dividends").createIndex({ date: 1, ticker: 1, broker: 1 });
 }
 
 function extractBulkCounts(err, attempted) {
@@ -156,7 +156,15 @@ export default async function handler(req, res) {
 
         const quantity = normNum(r.quantity);
         const price = normNum(r.price);
+
+        // cashflow in trade currency:
+        // buy (qty>0) => proceeds negative; sell (qty<0) => proceeds positive
+        const proceeds = -(quantity * price);
+
+        // IBKR "Comm in AUD" for many rows — keep fee currency explicitly
         const fee = Math.abs(normNum(r.fee));
+        const feeCurrency = normUpper(r.feeCurrency || (broker === "IBKR" ? "AUD" : currency));
+
         const realisedPL = normNum(r.realisedPL);
 
         tradeDocs.push({
@@ -165,7 +173,9 @@ export default async function handler(req, res) {
           ts,
           quantity,
           price,
+          proceeds,
           fee,
+          feeCurrency,
           broker,
           currency,
           realisedPL,

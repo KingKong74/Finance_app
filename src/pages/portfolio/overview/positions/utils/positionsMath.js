@@ -1,10 +1,26 @@
-// src/pages/portfolio/positions/utils/positionsMath.js
+// src/pages/portfolio/overview/positions/utils/positionsMath.js
 
-export function buildPositionsFIFO(
-  trades,
-  { useLastTradeAsMarketPrice = true } = {}
-) {
-  // key: broker|ticker|currency|type  ✅ add broker
+/**
+ * FIFO open-position builder that supports BOTH long and short lots.
+ *
+ * NOW BROKER-AWARE:
+ * key = broker|ticker|currency|type
+ *
+ * Conventions:
+ * - quantity is signed: long > 0, short < 0
+ * - lots store signed qty:
+ *   - long lot:  { qty: +10, price: 100 }
+ *   - short lot: { qty: -10, price: 100 }
+ * - costBasis is the signed sum of open lots (plus fees applied as "cost drag"):
+ *   - long:  positive cost basis
+ *   - short: negative cost basis (represents proceeds from the short sale)
+ *
+ * With your UI formula:
+ *   marketValue = quantity * marketPrice
+ *   unrealised  = marketValue - costBasis
+ * …this gives correct signs for shorts.
+ */
+export function buildPositionsFIFO(trades, { useLastTradeAsMarketPrice = true } = {}) {
   const map = new Map();
 
   for (const t of trades) {
@@ -13,7 +29,7 @@ export function buildPositionsFIFO(
 
     if (!map.has(key)) {
       map.set(key, {
-        broker, // ✅ keep broker
+        broker,
         ticker: t.ticker,
         currency: t.currency,
         type: t.type,
@@ -28,6 +44,7 @@ export function buildPositionsFIFO(
 
     const p = map.get(key);
 
+    // last trade price fallback
     if (useLastTradeAsMarketPrice && t.price != null) {
       p.marketPrice = Number(t.price);
       p.lastDate = t.date;
@@ -36,18 +53,13 @@ export function buildPositionsFIFO(
     const q = Number(t.quantity || 0);
     const px = Number(t.price || 0);
     const fee = Number(t.fee || 0);
-
     if (!q) continue;
 
     const sgn = (n) => (n > 0 ? 1 : n < 0 ? -1 : 0);
 
     let remaining = q;
 
-    while (
-      remaining !== 0 &&
-      p.lots.length > 0 &&
-      sgn(p.lots[0].qty) !== sgn(remaining)
-    ) {
+    while (remaining !== 0 && p.lots.length > 0 && sgn(p.lots[0].qty) !== sgn(remaining)) {
       const lot = p.lots[0];
 
       const lotSign = sgn(lot.qty);
@@ -69,6 +81,7 @@ export function buildPositionsFIFO(
       p.costBasis += remaining * px;
     }
 
+    // fee as cost drag
     p.costBasis += fee;
 
     p.avgPrice = p.quantity !== 0 ? p.costBasis / p.quantity : null;
@@ -77,7 +90,7 @@ export function buildPositionsFIFO(
   const out = Array.from(map.values())
     .filter((p) => Math.abs(p.quantity) > 1e-12)
     .map((p) => ({
-      broker: p.broker, // ✅ output broker
+      broker: p.broker,
       ticker: p.ticker,
       currency: p.currency,
       type: p.type,
