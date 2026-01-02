@@ -2,75 +2,136 @@
 import React, { useEffect, useMemo, useState } from "react";
 import "../../../../css/positionsTab.css";
 
-import { DISPLAY_OPTIONS, fmtMoney, fmtNum, toBase } from "./utils/money";
+import { fmtMoney, fmtNum, toBase } from "./utils/money";
 import { priceBadgeLabel, safeJson } from "./utils/priceMeta";
-import { buildPositionsFIFO, summariseCash } from "./utils/positionsMath";
+import { buildPositionsFIFO } from "./utils/positionsMath";
 
 const useLastTradeAsMarketPrice = true;
 
+function safeUpper(s) {
+  return String(s || "").trim().toUpperCase();
+}
+function num(x) {
+  if (typeof x === "string") x = x.replace(/,/g, "");
+  const n = Number(x);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function computeFxPositionAndUpnlAud(forexTrades, fxRates) {
+  const r = fxRates || {};
+  const lots = []; // USD lots: [{ usd, costAud }]
+
+  const trades = (Array.isArray(forexTrades) ? forexTrades : [])
+    .filter((t) => safeUpper(t.ticker) === "AUD.USD")
+    .map((t) => {
+      const qtyAud = num(t.quantity);
+      const price = num(t.price);
+      const proceedsUsd = t.proceeds != null ? num(t.proceeds) : -(qtyAud * price);
+      const fee = num(t.fee);
+      const feeCurrency = safeUpper(t.feeCurrency || "AUD");
+      return {
+        date: String(t.date || ""),
+        ts: String(t.ts || ""),
+        qtyAud,
+        proceedsUsd,
+        fee,
+        feeCurrency,
+      };
+    })
+    .filter((t) => t.date);
+
+  trades.sort((a, b) => {
+    const ka = a.ts || `${a.date}T00:00:00`;
+    const kb = b.ts || `${b.date}T00:00:00`;
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
+
+  for (const t of trades) {
+    const feeAud =
+      t.feeCurrency === "AUD" ? t.fee : toBase(t.fee, t.feeCurrency, "AUD", r);
+
+    if (t.qtyAud < 0) {
+      // sell AUD => receive USD => buy USD lot
+      const usdBought = Math.max(0, t.proceedsUsd);
+      const audCost = Math.abs(t.qtyAud) + feeAud;
+      if (usdBought > 0) lots.push({ usd: usdBought, costAud: audCost });
+      continue;
+    }
+
+    if (t.qtyAud > 0) {
+      // buy AUD => spend USD => sell USD lots FIFO
+      const usdSpent = Math.max(0, -t.proceedsUsd);
+      let remaining = usdSpent;
+
+      while (remaining > 1e-12 && lots.length) {
+        const lot = lots[0];
+        const take = Math.min(remaining, lot.usd);
+
+        const lotUsdBefore = lot.usd;
+        lot.usd -= take;
+
+        const ratio = take / (lotUsdBefore || 1);
+        lot.costAud -= lot.costAud * ratio;
+
+        remaining -= take;
+
+        if (lot.usd <= 1e-12) lots.shift();
+      }
+
+      if (feeAud > 0 && lots.length) lots[0].costAud += feeAud;
+    }
+  }
+
+  const usdOpen = lots.reduce((a, l) => a + l.usd, 0);
+  const costAudOpen = lots.reduce((a, l) => a + l.costAud, 0);
+  const valueAudOpen = toBase(usdOpen, "USD", "AUD", r);
+  const upnlAud = valueAudOpen - costAudOpen;
+
+  return { usdOpen, upnlAud };
+}
+
 export default function Positions() {
   const [rows, setRows] = useState([]);
-  const [cashRows, setCashRows] = useState([]);
-
-  // ✅ dropdown selection
-  const [displayCurrency, setDisplayCurrency] = useState("MARKET");
-
-  // ✅ live FX from /api/fx (AUD base)
-  const [fxRates, setFxRates] = useState({ AUD: 1 });
-
   const [loading, setLoading] = useState(true);
 
-  // ✅ Load FX (live + DB cache fallback handled by /api/fx)
-  useEffect(() => {
-    const loadFx = async () => {
-      try {
-        const r = await fetch("/api/fx?base=AUD");
-        if (!r.ok) throw new Error("fx failed");
-        const json = await r.json();
-        const rates = json?.rates && typeof json.rates === "object" ? json.rates : {};
-        // ensure AUD exists
-        if (!rates.AUD) rates.AUD = 1;
-        setFxRates(rates);
-      } catch (e) {
-        console.warn("FX fetch failed, falling back to AUD only.", e);
-        setFxRates({ AUD: 1 });
-      }
-    };
-    loadFx();
-  }, []);
+  // FX + display currency
+  const [fxRates, setFxRates] = useState({ AUD: 1 });
+  const [displayCurrency, setDisplayCurrency] = useState("MARKET"); // MARKET | AUD | USD | EUR
 
-  // ✅ Your requirement: only Market | AUD | USD | EUR
-  const currencyOptions = useMemo(() => {
-    const want = ["AUD", "USD", "EUR"];
-    const available = new Set(Object.keys(fxRates || {}).map((k) => String(k).toUpperCase()));
-    const filtered = want.filter((c) => available.has(c));
-    // always allow AUD even if missing (shouldn't be)
-    if (!filtered.includes("AUD")) filtered.unshift("AUD");
-    return ["MARKET", ...filtered];
-  }, [fxRates]);
-
-  // ✅ Guard: if current selection becomes unavailable, reset to MARKET
-  useEffect(() => {
-    if (!currencyOptions.includes(displayCurrency)) setDisplayCurrency("MARKET");
-  }, [currencyOptions, displayCurrency]);
+  // Derived cash + FX position
+  const [cashByCcy, setCashByCcy] = useState({});
+  const [fxPos, setFxPos] = useState({ usdOpen: 0, upnlAud: 0 });
 
   useEffect(() => {
     const run = async () => {
       try {
         setLoading(true);
 
-        const [rTrades, rCrypto, rCash] = await Promise.all([
+        // FX rates first
+        const rFx = await fetch("/api/fx?base=AUD&ttl=21600");
+        const fxJson = rFx.ok ? await safeJson(rFx) : null;
+        const rates =
+          fxJson?.rates && typeof fxJson.rates === "object"
+            ? { ...fxJson.rates, AUD: 1 }
+            : { AUD: 1 };
+        setFxRates(rates);
+
+        // Pull trades + crypto + forex + cash (+ dividends optional later)
+        const [rTrades, rCrypto, rForex, rCash] = await Promise.all([
           fetch("/api/ledger?tab=trades"),
           fetch("/api/ledger?tab=crypto"),
+          fetch("/api/ledger?tab=forex"),
           fetch("/api/ledger?tab=cash"),
         ]);
 
-        const [trades, crypto, cash] = await Promise.all([
+        const [trades, crypto, forex, cash] = await Promise.all([
           rTrades.ok ? safeJson(rTrades) : [],
           rCrypto.ok ? safeJson(rCrypto) : [],
+          rForex.ok ? safeJson(rForex) : [],
           rCash.ok ? safeJson(rCash) : [],
         ]);
 
+        // ---- POSITIONS ----
         const allTrades = [
           ...(Array.isArray(trades) ? trades : []),
           ...(Array.isArray(crypto) ? crypto : []),
@@ -79,26 +140,22 @@ export default function Positions() {
         const normalised = allTrades
           .map((t) => ({
             broker: String(t.broker || "").trim() || "Unknown",
-            ticker: String(t.ticker || "").toUpperCase(),
+            ticker: safeUpper(t.ticker),
             date: String(t.date || ""),
-            quantity: Number(t.quantity || 0),
-            price: Number(t.price || 0),
-            fee: Number(t.fee || 0),
-            currency: String(t.currency || "USD").toUpperCase(),
+            quantity: num(t.quantity),
+            price: num(t.price),
+            fee: num(t.fee),
+            currency: safeUpper(t.currency || "USD"),
             type: t.type || "trades",
           }))
           .filter((t) => t.ticker && t.date);
 
         normalised.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
-        const positions = buildPositionsFIFO(normalised, {
-          useLastTradeAsMarketPrice,
-        });
+        const positions = buildPositionsFIFO(normalised, { useLastTradeAsMarketPrice });
 
-        const symbols = Array.from(
-          new Set(positions.map((p) => String(p.ticker || "").toUpperCase()))
-        ).filter(Boolean);
-
+        // Prices
+        const symbols = Array.from(new Set(positions.map((p) => safeUpper(p.ticker)))).filter(Boolean);
         let priceMap = {};
         if (symbols.length > 0) {
           const rPrices = await fetch(`/api/prices?symbols=${symbols.join(",")}&ttl=60`);
@@ -108,16 +165,14 @@ export default function Positions() {
 
         const mergedPositions = positions.map((p) => {
           const info = priceMap?.[p.ticker];
-
           if (info && info.price != null) {
             return {
               ...p,
-              marketPrice: Number(info.price),
+              marketPrice: num(info.price),
               marketAsOf: info.asOf || null,
               marketSource: info.source || "cache",
             };
           }
-
           return {
             ...p,
             marketAsOf: null,
@@ -125,19 +180,55 @@ export default function Positions() {
           };
         });
 
-        const cashNormalised = (Array.isArray(cash) ? cash : []).map((c) => ({
-          date: String(c.date || ""),
-          currency: String(c.currency || "AUD").toUpperCase(),
-          entryType: String(c.entryType || "deposit"),
-          amount: Number(c.amount || 0),
-        }));
+        // ---- DERIVED CASH (flows) ----
+        const basket = {};
+
+        const add = (ccy, delta) => {
+          const C = safeUpper(ccy || "AUD");
+          basket[C] = num(basket[C]) + num(delta);
+        };
+
+        // cash entries
+        (Array.isArray(cash) ? cash : []).forEach((c) => {
+          add(c.currency, num(c.amount));
+        });
+
+        // trades/crypto proceeds + fees
+        const applyTrade = (t) => {
+          const proceeds =
+            t.proceeds != null ? num(t.proceeds) : -(num(t.quantity) * num(t.price));
+          add(t.currency || "USD", proceeds);
+
+          const fee = num(t.fee);
+          if (fee) add(t.feeCurrency || "AUD", -fee);
+        };
+
+        (Array.isArray(trades) ? trades : []).forEach(applyTrade);
+        (Array.isArray(crypto) ? crypto : []).forEach(applyTrade);
+
+        // forex legs
+        (Array.isArray(forex) ? forex : []).forEach((t) => {
+          const proceedsUsd =
+            t.proceeds != null ? num(t.proceeds) : -(num(t.quantity) * num(t.price));
+          add("USD", proceedsUsd);
+          add("AUD", num(t.quantity));
+
+          const fee = num(t.fee);
+          if (fee) add(t.feeCurrency || "AUD", -fee);
+        });
+
+        setCashByCcy(basket);
+
+        // ---- FX position (AUD.USD) ----
+        const fx = computeFxPositionAndUpnlAud(forex, rates);
+        setFxPos(fx);
 
         setRows(mergedPositions);
-        setCashRows(summariseCash(cashNormalised));
       } catch (e) {
         console.error("Positions fetch failed:", e);
         setRows([]);
-        setCashRows([]);
+        setCashByCcy({});
+        setFxPos({ usdOpen: 0, upnlAud: 0 });
       } finally {
         setLoading(false);
       }
@@ -146,12 +237,13 @@ export default function Positions() {
     run();
   }, []);
 
+  const allowedDisplay = ["MARKET", "AUD", "USD", "EUR"];
+
   const rowsWithDisplay = useMemo(() => {
     return rows.map((p) => {
       const marketValue = p.marketPrice != null ? p.quantity * p.marketPrice : null;
       const unrealised = marketValue != null ? marketValue - p.costBasis : null;
 
-      // MARKET mode: show everything in trade currency
       if (displayCurrency === "MARKET") {
         return {
           ...p,
@@ -164,7 +256,6 @@ export default function Positions() {
         };
       }
 
-      // Fixed currency mode: convert from trade currency -> display currency using live fxRates
       const mvDisplay =
         marketValue == null ? null : toBase(marketValue, p.currency, displayCurrency, fxRates);
       const cbDisplay = toBase(p.costBasis, p.currency, displayCurrency, fxRates);
@@ -183,12 +274,22 @@ export default function Positions() {
     });
   }, [rows, displayCurrency, fxRates]);
 
+  // Cash rows for table
+  const cashRows = useMemo(() => {
+    const entries = Object.entries(cashByCcy || {}).map(([currency, balance]) => ({
+      currency,
+      balance: num(balance),
+    }));
+    entries.sort((a, b) => a.currency.localeCompare(b.currency));
+    return entries;
+  }, [cashByCcy]);
+
   return (
     <div className="positions-page">
+      {/* Header with dropdown (back again) */}
       <div className="positions-header">
         <h2 className="positions-title">Positions</h2>
 
-        {/* ✅ restored dropdown, limited to MARKET/AUD/USD/EUR */}
         <div className="positions-controls">
           <label className="currency-pill">
             P/L currency:&nbsp;
@@ -196,7 +297,7 @@ export default function Positions() {
               value={displayCurrency}
               onChange={(e) => setDisplayCurrency(e.target.value)}
             >
-              {currencyOptions.map((c) => (
+              {allowedDisplay.map((c) => (
                 <option key={c} value={c}>
                   {c === "MARKET" ? "Market currency" : c}
                 </option>
@@ -225,11 +326,15 @@ export default function Positions() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="positions-empty">Loading…</td>
+                  <td colSpan={6} className="positions-empty">
+                    Loading…
+                  </td>
                 </tr>
               ) : rowsWithDisplay.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="positions-empty">No positions yet.</td>
+                  <td colSpan={6} className="positions-empty">
+                    No positions yet.
+                  </td>
                 </tr>
               ) : (
                 rowsWithDisplay.map((p) => {
@@ -296,8 +401,9 @@ export default function Positions() {
         </p>
       </div>
 
+      {/* Cash + FX exposure */}
       <div className="cash-card">
-        <h3 className="cash-title">Cash holdings</h3>
+        <h3 className="cash-title">Cash holdings (derived)</h3>
 
         <div className="positions-table-wrap">
           <table className="positions-table cash-table">
@@ -314,20 +420,14 @@ export default function Positions() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td
-                    colSpan={displayCurrency !== "MARKET" ? 3 : 2}
-                    className="positions-empty"
-                  >
+                  <td colSpan={displayCurrency !== "MARKET" ? 3 : 2} className="positions-empty">
                     Loading…
                   </td>
                 </tr>
               ) : cashRows.length === 0 ? (
                 <tr>
-                  <td
-                    colSpan={displayCurrency !== "MARKET" ? 3 : 2}
-                    className="positions-empty"
-                  >
-                    No cash entries yet.
+                  <td colSpan={displayCurrency !== "MARKET" ? 3 : 2} className="positions-empty">
+                    No cash yet.
                   </td>
                 </tr>
               ) : (
@@ -337,10 +437,7 @@ export default function Positions() {
                     <td className="num">{fmtMoney(c.balance, c.currency)}</td>
                     {displayCurrency !== "MARKET" && (
                       <td className="num">
-                        {fmtMoney(
-                          toBase(c.balance, c.currency, displayCurrency, fxRates),
-                          displayCurrency
-                        )}
+                        {fmtMoney(toBase(c.balance, c.currency, displayCurrency, fxRates), displayCurrency)}
                       </td>
                     )}
                   </tr>
@@ -349,6 +446,38 @@ export default function Positions() {
             </tbody>
           </table>
         </div>
+
+        {/* FX row like a “position” */}
+        {!loading && (
+          <div style={{ marginTop: 14 }}>
+            <h4 style={{ margin: "10px 0 6px" }}>FX exposure</h4>
+
+            <div className="positions-table-wrap">
+              <table className="positions-table cash-table">
+                <thead>
+                  <tr>
+                    <th>Pair</th>
+                    <th className="num">USD open</th>
+                    <th className="num">Unrealised (AUD)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>AUD.USD</td>
+                    <td className="num">{fmtNum(fxPos.usdOpen, 2)}</td>
+                    <td className={`num ${fxPos.upnlAud > 0 ? "pos" : fxPos.upnlAud < 0 ? "neg" : ""}`}>
+                      {fmtMoney(fxPos.upnlAud, "AUD")}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <p className="positions-note" style={{ marginTop: 6 }}>
+              FX unrealised is calculated from your AUD.USD conversion trades (USD lots FIFO), valued using current AUD→USD rate.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

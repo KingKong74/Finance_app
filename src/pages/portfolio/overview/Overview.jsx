@@ -13,39 +13,44 @@ import { buildPositionsFIFO } from "./positions/utils/positionsMath";
 function safeUpper(s) {
   return String(s || "").trim().toUpperCase();
 }
-
 function num(x) {
   if (typeof x === "string") x = x.replace(/,/g, "");
   const n = Number(x);
   return Number.isFinite(n) ? n : 0;
 }
 
-/**
- * FX lots from forex conversions:
- * Symbol: AUD.USD
- * quantity = AUD amount (signed)
- * price    = USD per 1 AUD
- * proceeds = -(qty * price)  (USD cashflow)
- *
- * We treat this as buying/selling USD lots with an AUD cost basis,
- * then compute unrealised using current USD->AUD conversion.
- */
-function computeFxUnrealisedAud(forexTrades, fxRates, broker) {
+function computeFxPositionAndUpnlAud(forexTrades, fxRates, broker) {
+  // AUD.USD:
+  // qty = AUD amount (signed), price = USD per AUD
+  // proceeds = -(qty*price) in USD
   const r = fxRates || {};
-  const lots = []; // [{ usd, costAud }]
-  let usdNet = 0;
+  const lots = []; // USD lots: [{ usd, costAud }]
+  const bKey = safeUpper(broker);
 
   const trades = (Array.isArray(forexTrades) ? forexTrades : [])
-    .filter((t) => safeUpper(t.ticker) === "AUD.USD" && safeUpper(t.broker) === safeUpper(broker))
-    .map((t) => ({
-      date: String(t.date || ""),
-      ts: String(t.ts || ""),
-      qtyAud: num(t.quantity),
-      price: num(t.price),
-      proceedsUsd: t.proceeds != null ? num(t.proceeds) : -(num(t.quantity) * num(t.price)),
-      fee: num(t.fee),
-      feeCurrency: safeUpper(t.feeCurrency || "AUD"),
-    }))
+    .filter(
+      (t) => safeUpper(t.type) === "FOREX" || safeUpper(t.type) === "forex"
+    )
+    .filter((t) => safeUpper(t.ticker) === "AUD.USD")
+    .filter((t) => safeUpper(t.broker) === bKey)
+    .map((t) => {
+      const qtyAud = num(t.quantity);
+      const price = num(t.price);
+      const proceedsUsd =
+        t.proceeds != null ? num(t.proceeds) : -(qtyAud * price);
+
+      const fee = num(t.fee);
+      const feeCurrency = safeUpper(t.feeCurrency || "AUD");
+
+      return {
+        date: String(t.date || ""),
+        ts: String(t.ts || ""),
+        qtyAud,
+        proceedsUsd,
+        fee,
+        feeCurrency,
+      };
+    })
     .filter((t) => t.date);
 
   trades.sort((a, b) => {
@@ -56,57 +61,50 @@ function computeFxUnrealisedAud(forexTrades, fxRates, broker) {
 
   for (const t of trades) {
     const feeAud =
-      t.feeCurrency === "AUD" ? t.fee : toBase(t.fee, t.feeCurrency, "AUD", r);
+      t.feeCurrency === "AUD"
+        ? t.fee
+        : toBase(t.fee, t.feeCurrency, "AUD", r);
 
-    // qtyAud < 0 => sell AUD, receive USD => BUY USD lot
     if (t.qtyAud < 0) {
-      const usdBought = Math.max(0, t.proceedsUsd); // should be positive
+      // sell AUD, receive USD => BUY USD lot
+      const usdBought = Math.max(0, t.proceedsUsd);
       const audCost = Math.abs(t.qtyAud) + feeAud;
-      if (usdBought > 0) {
-        lots.push({ usd: usdBought, costAud: audCost });
-        usdNet += usdBought;
-      }
+
+      if (usdBought > 0) lots.push({ usd: usdBought, costAud: audCost });
       continue;
     }
 
-    // qtyAud > 0 => buy AUD, pay USD => SELL USD lots FIFO
     if (t.qtyAud > 0) {
-      const usdSpent = Math.max(0, -t.proceedsUsd); // proceeds negative on buy
+      // buy AUD, spend USD => SELL USD lots FIFO
+      const usdSpent = Math.max(0, -t.proceedsUsd);
       let remaining = usdSpent;
 
       while (remaining > 1e-12 && lots.length) {
         const lot = lots[0];
         const take = Math.min(remaining, lot.usd);
 
-        // reduce lot
+        const lotUsdBefore = lot.usd;
         lot.usd -= take;
-        const proportion = take / (take + lot.usd || 1);
-        lot.costAud -= lot.costAud * proportion;
+
+        const ratio = take / (lotUsdBefore || 1);
+        lot.costAud -= lot.costAud * ratio;
 
         remaining -= take;
 
         if (lot.usd <= 1e-12) lots.shift();
       }
 
-      // fee on sell USD also drags remaining position value (we just reduce unrealised by fee)
-      if (feeAud > 0 && lots.length) {
-        // apply fee to first remaining lot cost basis (close enough)
-        lots[0].costAud += feeAud;
-      } else if (feeAud > 0 && !lots.length) {
-        // no open lots — ignore
-      }
-
-      usdNet -= usdSpent;
+      // fee drags remaining position (approx)
+      if (feeAud > 0 && lots.length) lots[0].costAud += feeAud;
     }
   }
 
   const usdOpen = lots.reduce((a, l) => a + l.usd, 0);
   const costAudOpen = lots.reduce((a, l) => a + l.costAud, 0);
-
   const valueAudOpen = toBase(usdOpen, "USD", "AUD", r);
-  const unrealisedAud = valueAudOpen - costAudOpen;
+  const upnlAud = valueAudOpen - costAudOpen;
 
-  return unrealisedAud;
+  return { usdOpen, upnlAud };
 }
 
 export default function Overview() {
@@ -116,17 +114,21 @@ export default function Overview() {
   const [panelOpen, setPanelOpen] = useState(true);
   const [overviewTab, setOverviewTab] = useState("Dashboard");
 
-  const [accounts, setAccounts] = useState([{ name: "All Accounts", total: 0, cash: 0, pl: 0, dayPL: 0 }]);
+  const [accounts, setAccounts] = useState([
+    { name: "All Accounts", total: 0, cash: 0, pl: 0, dayPL: 0 },
+  ]);
 
   useEffect(() => {
     const run = async () => {
       try {
-        // FX (AUD base)
+        // FX rates (AUD base) — from your cached API
         const rFx = await fetch("/api/fx?base=AUD&ttl=21600");
         const fxJson = rFx.ok ? await rFx.json() : null;
-        const fxRates = fxJson?.rates && typeof fxJson.rates === "object" ? { ...fxJson.rates, AUD: 1 } : { AUD: 1 };
+        const fxRates =
+          fxJson?.rates && typeof fxJson.rates === "object"
+            ? { ...fxJson.rates, AUD: 1 }
+            : { AUD: 1 };
 
-        // Pull everything we need
         const [rTrades, rCrypto, rForex, rCash, rDivs] = await Promise.all([
           fetch("/api/ledger?tab=trades"),
           fetch("/api/ledger?tab=crypto"),
@@ -143,12 +145,12 @@ export default function Overview() {
           rDivs.ok ? rDivs.json() : [],
         ]);
 
+        // ---- POSITIONS (exclude forex conversions) ----
         const allTradeRows = [
           ...(Array.isArray(trades) ? trades : []),
           ...(Array.isArray(crypto) ? crypto : []),
         ];
 
-        // ----- POSITIONS (exclude forex; it’s conversions) -----
         const normalisedForPositions = allTradeRows
           .map((t) => ({
             broker: String(t.broker || "").trim() || "Unknown",
@@ -160,13 +162,17 @@ export default function Overview() {
             currency: safeUpper(t.currency || "USD"),
             type: t.type || "trades",
           }))
-          .filter((t) => t.ticker && t.date && t.type !== "forex");
+          .filter((t) => t.ticker && t.date && safeUpper(t.type) !== "FOREX");
 
-        normalisedForPositions.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+        normalisedForPositions.sort((a, b) =>
+          a.date < b.date ? -1 : a.date > b.date ? 1 : 0
+        );
 
-        const positions = buildPositionsFIFO(normalisedForPositions, { useLastTradeAsMarketPrice: true });
+        const positions = buildPositionsFIFO(normalisedForPositions, {
+          useLastTradeAsMarketPrice: true,
+        });
 
-        // Prices for equities/crypto
+        // prices
         const symbols = Array.from(new Set(positions.map((p) => p.ticker))).filter(Boolean);
         let priceMap = {};
         if (symbols.length) {
@@ -174,19 +180,17 @@ export default function Overview() {
           priceMap = rPrices.ok ? await rPrices.json() : {};
         }
 
-        // broker -> { mvAud, upnlAud }
-        const posAgg = new Map();
+        // broker aggregates
+        const posAgg = new Map(); // broker -> { mvAud, upnlAud }
 
         for (const p of positions) {
           const broker = String(p.broker || "").trim() || "Unknown";
-
           const info = priceMap?.[p.ticker];
           const px = info?.price != null ? num(info.price) : num(p.marketPrice);
           const mv = px ? num(p.quantity) * px : 0;
 
           const mvAud = toBase(mv, p.currency, "AUD", fxRates);
           const cbAud = toBase(num(p.costBasis), p.currency, "AUD", fxRates);
-
           const upnlAud = mvAud - cbAud;
 
           const cur = posAgg.get(broker) || { mvAud: 0, upnlAud: 0 };
@@ -195,64 +199,55 @@ export default function Overview() {
           posAgg.set(broker, cur);
         }
 
-        // ----- CASH (cash entries + dividends + trade proceeds + fees) -----
-        // cashByBroker: broker -> { AUD: n, USD: n, EUR: n, ... }
-        const cashByBroker = new Map();
+        // ---- CASH (derived) ----
+        // IMPORTANT: for now we DO NOT add dividends into cash
+        // because it’s the most common reason for “cash feels too high”.
+        // (We’ll add a dedicated “Income” metric later.)
+        const cashByBroker = new Map(); // broker -> { CCY: bal }
+
         const addCash = (broker, ccy, delta) => {
           const b = String(broker || "").trim() || "Unknown";
-          const c = safeUpper(ccy || "AUD");
+          const C = safeUpper(ccy || "AUD");
           if (!cashByBroker.has(b)) cashByBroker.set(b, {});
           const obj = cashByBroker.get(b);
-          obj[c] = num(obj[c]) + num(delta);
+          obj[C] = num(obj[C]) + num(delta);
         };
 
-        // cash entries (amount already signed in your importer)
+        // cash entries (deposits/withdrawals, etc)
         (Array.isArray(cash) ? cash : []).forEach((c) => {
           addCash(c.broker, c.currency, num(c.amount));
         });
 
-        // dividends
-        (Array.isArray(divs) ? divs : []).forEach((d) => {
-          addCash(d.broker, d.currency, num(d.amount));
-        });
-
-        // trades + crypto: use proceeds + feeCurrency
-        (Array.isArray(trades) ? trades : []).forEach((t) => {
+        // trade proceeds + fees (no realised PL)
+        const applyTradeRowToCash = (t) => {
           const broker = t.broker;
           const ccy = t.currency || "USD";
-          const proceeds = t.proceeds != null ? num(t.proceeds) : -(num(t.quantity) * num(t.price));
+          const proceeds =
+            t.proceeds != null ? num(t.proceeds) : -(num(t.quantity) * num(t.price));
           addCash(broker, ccy, proceeds);
 
           const fee = num(t.fee);
           if (fee) addCash(broker, t.feeCurrency || "AUD", -fee);
-        });
+        };
 
-        (Array.isArray(crypto) ? crypto : []).forEach((t) => {
-          const broker = t.broker;
-          const ccy = t.currency || "USD";
-          const proceeds = t.proceeds != null ? num(t.proceeds) : -(num(t.quantity) * num(t.price));
-          addCash(broker, ccy, proceeds);
+        (Array.isArray(trades) ? trades : []).forEach(applyTradeRowToCash);
+        (Array.isArray(crypto) ? crypto : []).forEach(applyTradeRowToCash);
 
-          const fee = num(t.fee);
-          if (fee) addCash(broker, t.feeCurrency || "AUD", -fee);
-        });
-
-        // forex: also affects cash (AUD/USD)
+        // forex legs affect cash:
+        // USD leg = proceeds (USD cashflow)
+        // AUD leg = quantity (AUD amount)
         (Array.isArray(forex) ? forex : []).forEach((t) => {
           const broker = t.broker;
-          const proceedsUsd = t.proceeds != null ? num(t.proceeds) : -(num(t.quantity) * num(t.price));
-          // forex rows in your DB: currency = "USD", proceeds is USD cashflow
+          const proceedsUsd =
+            t.proceeds != null ? num(t.proceeds) : -(num(t.quantity) * num(t.price));
           addCash(broker, "USD", proceedsUsd);
-
-          // also the AUD leg: quantity is AUD amount (signed)
-          // qty < 0 means AUD sold (cash down), qty > 0 means AUD bought (cash up)
           addCash(broker, "AUD", num(t.quantity));
 
           const fee = num(t.fee);
           if (fee) addCash(broker, t.feeCurrency || "AUD", -fee);
         });
 
-        // convert cash basket to AUD totals
+        // convert cash baskets to AUD totals
         const cashAudByBroker = new Map();
         for (const [broker, basket] of cashByBroker.entries()) {
           let aud = 0;
@@ -262,70 +257,51 @@ export default function Overview() {
           cashAudByBroker.set(broker, aud);
         }
 
-        // ----- REALISED PL (convert each row’s realisedPL into AUD using trade currency) -----
-        const realisedAudByBroker = new Map();
-        const addRealised = (broker, ccy, val) => {
-          const b = String(broker || "").trim() || "Unknown";
-          const aud = toBase(num(val), ccy || "USD", "AUD", fxRates);
-          realisedAudByBroker.set(b, (realisedAudByBroker.get(b) || 0) + aud);
-        };
-
-        (Array.isArray(trades) ? trades : []).forEach((t) => addRealised(t.broker, t.currency, t.realisedPL));
-        (Array.isArray(crypto) ? crypto : []).forEach((t) => addRealised(t.broker, t.currency, t.realisedPL));
-        (Array.isArray(forex) ? forex : []).forEach((t) => addRealised(t.broker, t.currency, t.realisedPL));
-
-        // ----- DIVIDENDS as P/L component (AUD converted) -----
-        const divAudByBroker = new Map();
-        (Array.isArray(divs) ? divs : []).forEach((d) => {
-          const b = String(d.broker || "").trim() || "Unknown";
-          const aud = toBase(num(d.amount), d.currency || "USD", "AUD", fxRates);
-          divAudByBroker.set(b, (divAudByBroker.get(b) || 0) + aud);
-        });
-
-        // ----- FX UNREALISED (AUD) -----
+        // ---- FX UNREALISED (AUD) ----
         const fxUpnlAudByBroker = new Map();
-        const brokersFromForex = Array.from(
+        const fxUsdOpenByBroker = new Map();
+
+        const forexBrokers = Array.from(
           new Set((Array.isArray(forex) ? forex : []).map((t) => String(t.broker || "").trim() || "Unknown"))
         );
 
-        for (const b of brokersFromForex) {
-          const upnl = computeFxUnrealisedAud(forex, fxRates, b);
-          fxUpnlAudByBroker.set(b, upnl);
+        for (const b of forexBrokers) {
+          const { usdOpen, upnlAud } = computeFxPositionAndUpnlAud(forex, fxRates, b);
+          fxUsdOpenByBroker.set(b, usdOpen);
+          fxUpnlAudByBroker.set(b, upnlAud);
         }
 
-        // ----- BUILD ACCOUNTS -----
+        // ---- BUILD ACCOUNTS ----
         const brokers = Array.from(
-          new Set([
-            ...posAgg.keys(),
-            ...cashAudByBroker.keys(),
-            ...realisedAudByBroker.keys(),
-            ...divAudByBroker.keys(),
-            ...fxUpnlAudByBroker.keys(),
-          ])
+          new Set([...posAgg.keys(), ...cashAudByBroker.keys(), ...fxUpnlAudByBroker.keys()])
         ).sort((a, b) => a.localeCompare(b));
 
         const brokerAccounts = brokers.map((b) => {
-          const mv = posAgg.get(b)?.mvAud || 0;
-          const upnlPos = posAgg.get(b)?.upnlAud || 0;
+          const positionsMvAud = num(posAgg.get(b)?.mvAud || 0);
+          const posUpnlAud = num(posAgg.get(b)?.upnlAud || 0);
 
-          const cashAud = cashAudByBroker.get(b) || 0;
-          const realisedAud = realisedAudByBroker.get(b) || 0;
-          const divAud = divAudByBroker.get(b) || 0;
-          const fxUpnl = fxUpnlAudByBroker.get(b) || 0;
+          const cashAud = num(cashAudByBroker.get(b) || 0);
 
-          // P/L includes:
-          // - unrealised on open positions
-          // - realised trade P/L
-          // - dividends
-          // - FX unrealised
-          const plAud = upnlPos + realisedAud + divAud + fxUpnl;
+          const fxUpnlAud = num(fxUpnlAudByBroker.get(b) || 0);
+
+          // P/L = unrealised only (positions + FX)
+          const plAud = posUpnlAud + fxUpnlAud;
 
           return {
             name: b,
-            total: mv + cashAud,
+            total: positionsMvAud + cashAud,
             cash: cashAud,
             pl: plAud,
             dayPL: 0,
+            debug: {
+              positionsMvAud,
+              cashAud,
+              fxUpnlAud,
+              posUpnlAud,
+              fxUsdOpen: num(fxUsdOpenByBroker.get(b) || 0),
+              cashByCcy: cashByBroker.get(b) || {},
+              // divsCount: (Array.isArray(divs) ? divs : []).filter((d) => safeUpper(d.broker) === safeUpper(b)).length,
+            },
           };
         });
 
@@ -340,7 +316,25 @@ export default function Overview() {
           { name: "All Accounts", total: 0, cash: 0, pl: 0, dayPL: 0 }
         );
 
-        setAccounts([all, ...brokerAccounts]);
+        // Build a combined debug for "All Accounts"
+        const allDebug = brokerAccounts.reduce(
+          (d, a) => {
+            d.positionsMvAud += num(a.debug?.positionsMvAud);
+            d.cashAud += num(a.debug?.cashAud);
+            d.fxUpnlAud += num(a.debug?.fxUpnlAud);
+            d.posUpnlAud += num(a.debug?.posUpnlAud);
+            d.fxUsdOpen += num(a.debug?.fxUsdOpen);
+            // merge cashByCcy
+            const basket = a.debug?.cashByCcy || {};
+            for (const [ccy, bal] of Object.entries(basket)) {
+              d.cashByCcy[ccy] = num(d.cashByCcy[ccy]) + num(bal);
+            }
+            return d;
+          },
+          { positionsMvAud: 0, cashAud: 0, fxUpnlAud: 0, posUpnlAud: 0, fxUsdOpen: 0, cashByCcy: {} }
+        );
+
+        setAccounts([{ ...all, debug: allDebug }, ...brokerAccounts]);
 
         if (![all.name, ...brokers].includes(selectedAccount)) {
           setSelectedAccount("All Accounts");

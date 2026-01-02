@@ -2,6 +2,12 @@
 import React from "react";
 import StatCard from "./StatCard";
 
+const money = (n) =>
+  Number(n || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
 export default function AccountsPanel({
   accounts,
   panelOpen,
@@ -22,6 +28,9 @@ export default function AccountsPanel({
           const isSelected = selectedAccount === acc.name;
           const isExpanded = expandedAccount === acc.name;
 
+          const dayPL = Number(acc.dayPL || 0);
+          const total = Number(acc.total || 0);
+
           return (
             <div
               key={acc.name}
@@ -38,15 +47,12 @@ export default function AccountsPanel({
                   <span className="account-name">{acc.name}</span>
 
                   <div className="account-values">
-                    <span className="account-total">
-                      ${acc.total.toLocaleString()}
-                    </span>
+                    <span className="account-total">${money(total)}</span>
 
                     <span
-                      className={`account-day-pl ${acc.dayPL >= 0 ? "pos" : "neg"}`}
+                      className={`account-day-pl ${dayPL >= 0 ? "pos" : "neg"}`}
                     >
-                      {acc.dayPL >= 0 ? "+" : "-"}$
-                      {Math.abs(acc.dayPL).toLocaleString()}
+                      {dayPL >= 0 ? "+" : "-"}${money(Math.abs(dayPL))}
                     </span>
                   </div>
                 </button>
@@ -61,12 +67,66 @@ export default function AccountsPanel({
 
               {isExpanded && (
                 <div className="account-details">
-                  <StatCard title="Total" value={`$${acc.total.toLocaleString()}`} />
-                  <StatCard title="Cash" value={`$${acc.cash.toLocaleString()}`} />
+                  <StatCard title="Total" value={`$${money(acc.total)}`} />
+                  <StatCard title="Cash" value={`$${money(acc.cash)}`} />
                   <StatCard
-                    title="P/L"
-                    value={`${acc.pl >= 0 ? "+" : ""}$${acc.pl.toLocaleString()}`}
+                    title="P/L (Unrealised)"
+                    value={`${Number(acc.pl || 0) >= 0 ? "+" : "-"}$${money(
+                      Math.abs(acc.pl || 0)
+                    )}`}
                   />
+
+                  {/* ---- DEBUG BREAKDOWN ---- */}
+                  {acc.debug && (
+                    <>
+                      <div style={{ height: 10 }} />
+
+                      <StatCard
+                        title="Debug: Positions MV (AUD)"
+                        value={`$${money(acc.debug.positionsMvAud)}`}
+                      />
+                      <StatCard
+                        title="Debug: Cash (AUD) from flows"
+                        value={`$${money(acc.debug.cashAud)}`}
+                      />
+                      <StatCard
+                        title="Debug: FX Unrealised (AUD)"
+                        value={`${acc.debug.fxUpnlAud >= 0 ? "+" : "-"}$${money(
+                          Math.abs(acc.debug.fxUpnlAud)
+                        )}`}
+                      />
+                      <StatCard
+                        title="Debug: Positions Unrealised (AUD)"
+                        value={`${
+                          acc.debug.posUpnlAud >= 0 ? "+" : "-"
+                        }$${money(Math.abs(acc.debug.posUpnlAud))}`}
+                      />
+
+                      {acc.debug.cashByCcy && (
+                        <>
+                          <div style={{ height: 10 }} />
+                          <StatCard
+                            title="Cash basket"
+                            value=""
+                          />
+                          {Object.entries(acc.debug.cashByCcy)
+                            .sort(([a], [b]) => a.localeCompare(b))
+                            .map(([ccy, bal]) => (
+                              <StatCard
+                                key={`${acc.name}_${ccy}`}
+                                title={` • ${ccy}`}
+                                value={`${Number(bal) >= 0 ? "" : "-"}${Math.abs(
+                                  Number(bal || 0)
+                                ).toLocaleString(undefined, {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })}`}
+                              />
+                            ))}
+                        </>
+                      )}
+                    </>
+                  )}
                 </div>
               )}
             </div>
