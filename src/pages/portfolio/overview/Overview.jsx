@@ -221,37 +221,61 @@ export default function Overview() {
         });
 
         // trade proceeds + fees (no realised PL)
+        // ✅ normalise proceeds sign based on qty
         const applyTradeRowToCash = (t) => {
           const broker = t.broker;
           const ccy = t.currency || "USD";
-          const proceeds =
-            t.proceeds != null
-              ? num(t.proceeds)
-              : -(num(t.quantity) * num(t.price));
-          addCash(broker, ccy, proceeds);
+
+          const qty = num(t.quantity);
+          const px = num(t.price);
+
+          // raw proceeds from db OR derived
+          const raw =
+            t.proceeds != null ? num(t.proceeds) : -(qty * px);
+
+          // Normalise direction:
+          // BUY (qty > 0): cash OUT => negative
+          // SELL (qty < 0): cash IN  => positive
+          const signedProceeds =
+            qty > 0 ? -Math.abs(raw) : qty < 0 ? Math.abs(raw) : 0;
+
+          addCash(broker, ccy, signedProceeds);
 
           const fee = num(t.fee);
           if (fee) addCash(broker, t.feeCurrency || "AUD", -fee);
         };
 
+        // apply to trades + crypto
         (Array.isArray(trades) ? trades : []).forEach(applyTradeRowToCash);
         (Array.isArray(crypto) ? crypto : []).forEach(applyTradeRowToCash);
 
         // forex legs affect cash:
-        // USD leg = proceeds (USD cashflow)
-        // AUD leg = quantity (AUD amount)
+        // AUD.USD: qty = AUD (signed), price = USD per AUD
+        // We want consistent signed USD cashflow:
+        // sell AUD (qty < 0) => receive USD (cash IN, positive USD)
+        // buy  AUD (qty > 0) => spend USD  (cash OUT, negative USD)
         (Array.isArray(forex) ? forex : []).forEach((t) => {
           const broker = t.broker;
-          const proceedsUsd =
-            t.proceeds != null
-              ? num(t.proceeds)
-              : -(num(t.quantity) * num(t.price));
-          addCash(broker, "USD", proceedsUsd);
-          addCash(broker, "AUD", num(t.quantity));
+
+          const qtyAud = num(t.quantity);
+          const px = num(t.price);
+
+          const rawUsd =
+            t.proceeds != null ? num(t.proceeds) : -(qtyAud * px);
+
+          const signedUsd =
+            qtyAud < 0 ? Math.abs(rawUsd) : qtyAud > 0 ? -Math.abs(rawUsd) : 0;
+
+          // USD leg
+          addCash(broker, "USD", signedUsd);
+
+          // AUD leg (this is the AUD amount you bought/sold)
+          addCash(broker, "AUD", qtyAud);
 
           const fee = num(t.fee);
           if (fee) addCash(broker, t.feeCurrency || "AUD", -fee);
         });
+
 
         // convert cash baskets to AUD totals
         const cashAudByBroker = new Map();
