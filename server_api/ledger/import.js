@@ -1,4 +1,3 @@
-// /api/ledger/import.js
 import { connectToDB } from "../utils/db.js";
 
 function isIsoDate(s) {
@@ -31,16 +30,22 @@ function deriveTs(r) {
   return "";
 }
 
-/**
- * Deterministic fingerprint used for dedupe.
- * Keep it stable.
- */
 function makeImportKey(r) {
   const tab = normStr(r.tab).toLowerCase();
   const broker = normUpper(r.broker || "IBKR");
   const account = normStr(r.account || "");
-  const tsOrDate = deriveTs(r) || deriveDate(r);
   const currency = normStr(r.currency || "");
+
+  if (tab === "cash_report") {
+    const asOf = normStr(r.asOf || "");
+    const b = r.balances || {};
+    const a = normNum(b.AUD);
+    const u = normNum(b.USD);
+    const e = normNum(b.EUR);
+    return [broker, account, tab, asOf, `AUD:${a.toFixed(8)}`, `USD:${u.toFixed(8)}`, `EUR:${e.toFixed(8)}`].join("|");
+  }
+
+  const tsOrDate = deriveTs(r) || deriveDate(r);
 
   if (tab === "cash") {
     const amount = normNum(r.amount);
@@ -56,14 +61,6 @@ function makeImportKey(r) {
     return [broker, account, tab, tsOrDate, currency, ticker, amount.toFixed(8), note].join("|");
   }
 
-  // NEW: cash_report snapshot rows (Ending Cash by currency)
-  if (tab === "cash_report") {
-    const amount = normNum(r.amount);
-    const label = normStr(r.label || r.note || "Ending Cash");
-    return [broker, account, tab, tsOrDate, currency, label, amount.toFixed(8)].join("|");
-  }
-
-  // trades/forex/crypto
   const ticker = normUpper(r.ticker || "");
   const qty = normNum(r.quantity);
   const price = normNum(r.price);
@@ -76,16 +73,13 @@ async function ensureIndexes(db) {
   await db.collection("cash").createIndex({ importKey: 1 }, { unique: true, sparse: true });
   await db.collection("dividends").createIndex({ importKey: 1 }, { unique: true, sparse: true });
 
-  // NEW
+  // cash report snapshots
+  await db.collection("cash_reports").createIndex({ broker: 1, asOf: -1 });
   await db.collection("cash_reports").createIndex({ importKey: 1 }, { unique: true, sparse: true });
 
   await db.collection("trades").createIndex({ date: 1, ticker: 1, broker: 1 });
   await db.collection("cash").createIndex({ date: 1, entryType: 1, broker: 1 });
   await db.collection("dividends").createIndex({ date: 1, ticker: 1, broker: 1 });
-
-  // NEW: query “latest ending cash”
-  await db.collection("cash_reports").createIndex({ broker: 1, currency: 1, ts: -1 });
-  await db.collection("cash_reports").createIndex({ date: 1 });
 }
 
 function extractBulkCounts(err, attempted) {
@@ -112,20 +106,46 @@ export default async function handler(req, res) {
     const tradesCol = db.collection("trades");
     const cashCol = db.collection("cash");
     const dividendsCol = db.collection("dividends");
-    const cashReportsCol = db.collection("cash_reports"); // NEW
+    const cashReportsCol = db.collection("cash_reports");
 
     const tradeDocs = [];
     const cashDocs = [];
     const dividendDocs = [];
-    const cashReportDocs = []; // NEW
+    const cashReportDocs = [];
 
     for (const r of rows) {
       const tab = normStr(r.tab).toLowerCase();
+      const broker = normUpper(r.broker || "IBKR");
+
+      // ---- CASH REPORT SNAPSHOT ----
+      if (tab === "cash_report") {
+        const asOf = normStr(r.asOf || "");
+        if (!isIsoDate(asOf)) continue;
+
+        const balancesRaw = r.balances && typeof r.balances === "object" ? r.balances : {};
+        const balances = {
+          AUD: normNum(balancesRaw.AUD),
+          USD: normNum(balancesRaw.USD),
+          EUR: normNum(balancesRaw.EUR),
+        };
+
+        cashReportDocs.push({
+          broker,
+          account: normStr(r.account || ""),
+          asOf,
+          base: normUpper(r.base || "AUD"),
+          balances,
+          importKey: makeImportKey({ ...r, tab, broker, asOf, balances }),
+          createdAt: new Date(),
+          importedAt: new Date(),
+        });
+        continue;
+      }
+
       const date = deriveDate(r);
       const ts = deriveTs(r);
       if (!date) continue;
 
-      const broker = normUpper(r.broker || "IBKR");
       const currency = normStr(r.currency || (tab === "cash" ? "AUD" : "USD"));
 
       if (tab === "cash") {
@@ -166,35 +186,12 @@ export default async function handler(req, res) {
         continue;
       }
 
-      // NEW: cash_report snapshot rows
-      if (tab === "cash_report") {
-        const amount = normNum(r.amount);
-        if (!Number.isFinite(amount)) continue;
-
-        cashReportDocs.push({
-          date,
-          ts,
-          broker,
-          currency: normUpper(currency || "AUD"),
-          amount,
-          label: normStr(r.label || "Ending Cash"),
-          note: normStr(r.note || ""),
-          importKey: makeImportKey({ ...r, tab, date, ts, broker, currency, amount }),
-          createdAt: new Date(),
-          importedAt: new Date(),
-        });
-        continue;
-      }
-
       if (tab === "trades" || tab === "forex" || tab === "crypto") {
         const ticker = normUpper(r.ticker);
         if (!ticker) continue;
 
         const quantity = normNum(r.quantity);
         const price = normNum(r.price);
-
-        // cashflow in trade currency:
-        // buy (qty>0) => proceeds negative; sell (qty<0) => proceeds positive
         const proceeds = r.proceeds != null ? normNum(r.proceeds) : -(quantity * price);
 
         const fee = Math.abs(normNum(r.fee));
@@ -231,7 +228,7 @@ export default async function handler(req, res) {
       trades: { attempted: tradeDocs.length, inserted: 0, duplicates: 0, failed: 0 },
       cash: { attempted: cashDocs.length, inserted: 0, duplicates: 0, failed: 0 },
       dividends: { attempted: dividendDocs.length, inserted: 0, duplicates: 0, failed: 0 },
-      cash_report: { attempted: cashReportDocs.length, inserted: 0, duplicates: 0, failed: 0 }, // NEW
+      cash_report: { attempted: cashReportDocs.length, inserted: 0, duplicates: 0, failed: 0 },
     };
 
     if (tradeDocs.length) {
