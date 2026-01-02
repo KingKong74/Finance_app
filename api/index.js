@@ -1,23 +1,8 @@
 // /api/index.js
-import ledgerIndex from "../server_api/ledger/index.js";
-import ledgerImport from "../server_api/ledger/import.js";
-import ledgerImportPreview from "../server_api/ledger/importPreview.js";
-import ledgerById from "../server_api/ledger/[id].js";
+import path from "path";
+import { pathToFileURL } from "url";
+import fs from "fs";
 
-import pricesIndex from "../server_api/prices/index.js";
-import pricesRefresh from "../server_api/prices/refresh.js";
-import pricesRefresher from "../server_api/prices/refresher.js";
-
-import cashReport from "../server_api/overview/cash-report.js";
-import overviewAccount from "../server_api/overview/account.js";
-
-import fx from "../server_api/fx.js";
-
-/**
- * We use a rewrite so *all* /api/* hits this function.
- * Depending on Vercel behaviour, req.url may be "/api/index" instead of original path.
- * So we prefer the original URL header if present.
- */
 function getOriginalUrl(req) {
   return (
     req.headers["x-vercel-original-url"] ||
@@ -27,8 +12,22 @@ function getOriginalUrl(req) {
   );
 }
 
-function send404(res, path) {
-  return res.status(404).json({ error: `No route for ${path}` });
+function normaliseApiPath(p) {
+  // Expect "/api/...."
+  if (!p.startsWith("/api")) return null;
+
+  // Strip "/api"
+  let rest = p.slice(4); // "" or "/ledger/import"
+  if (!rest) rest = "/";
+
+  // Remove trailing slash (except "/")
+  if (rest.length > 1 && rest.endsWith("/")) rest = rest.slice(0, -1);
+
+  return rest; // "/" or "/ledger/import"
+}
+
+function send404(res, p) {
+  return res.status(404).json({ error: `No route for ${p}` });
 }
 
 export default async function handler(req, res) {
@@ -36,59 +35,54 @@ export default async function handler(req, res) {
     const originalUrl = getOriginalUrl(req);
     const host = req.headers.host || "localhost";
     const url = new URL(originalUrl, `http://${host}`);
-    const path = url.pathname;
+    const pathname = url.pathname;
 
-    // ---- FX ----
-    if (path === "/api/fx") {
-      return fx(req, res);
-    }
+    const rest = normaliseApiPath(pathname);
+    if (rest == null) return send404(res, pathname);
 
-    // ---- CASH REPORT (you call /api/cash-report in the app) ----
-    // Your file is in /overview/cash-report.js, but we expose it at /api/cash-report
-    if (path === "/api/cash-report") {
-      return cashReport(req, res);
-    }
+    // Build possible file targets inside /server_api
+    // Example: /api/ledger/import -> /server_api/ledger/import.js
+    // Example: /api/ledger/abc123 -> /server_api/ledger/[id].js  (fallback)
+    const serverRoot = path.join(process.cwd(), "server_api");
 
-    // ---- OVERVIEW ACCOUNT (optional) ----
-    if (path === "/api/account") {
-      return overviewAccount(req, res);
-    }
+    const directFile = path.join(serverRoot, `${rest}.js`);          // /ledger/import.js
+    const directIndex = path.join(serverRoot, rest, "index.js");     // /ledger/index.js
 
-    // ---- PRICES ----
-    if (path === "/api/prices") {
-      return pricesIndex(req, res);
-    }
-    if (path === "/api/prices/refresh") {
-      return pricesRefresh(req, res);
-    }
-    if (path === "/api/prices/refresher") {
-      return pricesRefresher(req, res);
-    }
+    let target = null;
 
-    // ---- LEDGER ----
-    if (path === "/api/ledger") {
-      return ledgerIndex(req, res);
-    }
-    if (path === "/api/ledger/import") {
-      return ledgerImport(req, res);
-    }
-    if (path === "/api/ledger/importPreview") {
-      return ledgerImportPreview(req, res);
+    if (fs.existsSync(directFile)) target = directFile;
+    else if (fs.existsSync(directIndex)) target = directIndex;
+    else {
+      // fallback for dynamic [id].js in a folder
+      // /api/ledger/<id> => /server_api/ledger/[id].js
+      const parts = rest.split("/").filter(Boolean); // ["ledger", "abc123"]
+      if (parts.length >= 2) {
+        const folder = parts[0];
+        const id = parts[1];
+
+        const dyn = path.join(serverRoot, folder, "[id].js");
+        if (fs.existsSync(dyn)) {
+          // Ensure req.query exists and set id like Next does
+          req.query = req.query || {};
+          req.query.id = id;
+          target = dyn;
+        }
+      }
     }
 
-    // ---- LEDGER [id] ----
-    // Match: /api/ledger/<id>
-    // (but not the above fixed routes)
-    const m = path.match(/^\/api\/ledger\/([^/]+)$/);
-    if (m) {
-      req.query = req.query || {};
-      req.query.id = m[1];
-      return ledgerById(req, res);
+    if (!target) return send404(res, pathname);
+
+    // Dynamically import the handler module
+    const mod = await import(pathToFileURL(target).href);
+    const fn = mod?.default;
+
+    if (typeof fn !== "function") {
+      return res.status(500).json({ error: `Handler missing default export for ${target}` });
     }
 
-    return send404(res, path);
+    return fn(req, res);
   } catch (e) {
-    console.error("API router error:", e);
+    console.error("API auto-router error:", e);
     return res.status(500).json({ error: "API router failed" });
   }
 }
