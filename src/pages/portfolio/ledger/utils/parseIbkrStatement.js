@@ -1,3 +1,4 @@
+// src/pages/portfolio/ledger/utils/parseIbkrStatement.js
 import Papa from "papaparse";
 
 function parseNumber(x) {
@@ -59,6 +60,20 @@ function tickerFromDividendDescription(desc) {
   return m ? m[1].toUpperCase() : "";
 }
 
+function isoToday() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function maxIso(a, b) {
+  if (!a) return b || "";
+  if (!b) return a || "";
+  return a > b ? a : b;
+}
+
 export function parseIbkrActivityStatement(text) {
   const parsed = Papa.parse(String(text || ""), {
     skipEmptyLines: true,
@@ -70,12 +85,25 @@ export function parseIbkrActivityStatement(text) {
   const out = [];
   let idx = 0;
 
+  // Track latest date we see so we can stamp cash_report snapshots
+  let latestIsoDate = "";
+
+  // ---- Cash Report snapshot collector ----
+  // We'll prefer "Ending Cash" over "Ending Settled Cash"
+  const cashReport = {
+    seen: false,
+    ending: {}, // { AUD, USD, EUR }
+    hasEndingCashLine: false,
+  };
+
   const dbg = {
-    pushed: { trades: 0, forex: 0, cash: 0, dividends: 0 },
+    pushed: { trades: 0, forex: 0, cash: 0, dividends: 0, cash_report: 0 },
     badCashDates: 0,
     badDividendDates: 0,
     sampleBadCash: [],
     sampleBadDiv: [],
+    cashReportLinesSeen: 0,
+    cashReportEnding: {},
   };
 
   for (const r of rows) {
@@ -86,6 +114,39 @@ export function parseIbkrActivityStatement(text) {
     // Skip totals like: "Dividends Data Total ..."
     const third = String(r?.[2] ?? "").trim();
     if (kind === "Data" && third === "Total") continue;
+
+    // ---- Cash Report: parse positional ----
+    if (section === "Cash Report" && kind === "Data") {
+      cashReport.seen = true;
+      dbg.cashReportLinesSeen++;
+
+      const lineItem = String(r?.[2] ?? "").trim();  // e.g. "Ending Cash"
+      const ccyOrBase = String(r?.[3] ?? "").trim(); // e.g. "AUD" or "Base Currency Summary"
+      const amount = parseNumber(r?.[4]);
+
+      // We only care about ENDING CASH balances
+      if (/^Ending Cash$/i.test(lineItem) || /^Ending Settled Cash$/i.test(lineItem)) {
+        const ccy =
+          /^Base Currency Summary$/i.test(ccyOrBase)
+            ? "AUD"
+            : String(ccyOrBase || "").toUpperCase();
+
+        // keep only these 3
+        if (ccy === "AUD" || ccy === "USD" || ccy === "EUR") {
+          if (/^Ending Cash$/i.test(lineItem)) {
+            cashReport.hasEndingCashLine = true;
+            cashReport.ending[ccy] = amount;
+          } else {
+            // Ending Settled Cash: only if no Ending Cash line exists
+            if (!cashReport.hasEndingCashLine && cashReport.ending[ccy] == null) {
+              cashReport.ending[ccy] = amount;
+            }
+          }
+        }
+      }
+
+      continue;
+    }
 
     if (kind === "Header") {
       headersBySection[section] = r.slice(2).map((h) => String(h ?? "").trim());
@@ -108,6 +169,8 @@ export function parseIbkrActivityStatement(text) {
       const dt = obj["Date/Time"] || "";
       const { date, ts } = toIsoDateTimeFromIbkr(dt);
       if (!date || !ticker || !assetCat) continue;
+
+      latestIsoDate = maxIso(latestIsoDate, date);
 
       if (assetCat === "Stocks") {
         out.push({
@@ -153,11 +216,11 @@ export function parseIbkrActivityStatement(text) {
 
       if (!iso) {
         dbg.badCashDates++;
-        if (dbg.sampleBadCash.length < 5) {
-          dbg.sampleBadCash.push({ rawDate, row: obj });
-        }
+        if (dbg.sampleBadCash.length < 5) dbg.sampleBadCash.push({ rawDate, row: obj });
         continue;
       }
+
+      latestIsoDate = maxIso(latestIsoDate, iso);
 
       const amount = parseNumber(obj["Amount"]);
       out.push({
@@ -181,11 +244,11 @@ export function parseIbkrActivityStatement(text) {
 
       if (!iso) {
         dbg.badDividendDates++;
-        if (dbg.sampleBadDiv.length < 5) {
-          dbg.sampleBadDiv.push({ rawDate, row: obj });
-        }
+        if (dbg.sampleBadDiv.length < 5) dbg.sampleBadDiv.push({ rawDate, row: obj });
         continue;
       }
+
+      latestIsoDate = maxIso(latestIsoDate, iso);
 
       const amount = parseNumber(obj["Amount"]);
       if (!amount) continue;
@@ -206,10 +269,45 @@ export function parseIbkrActivityStatement(text) {
     }
   }
 
-  console.groupCollapsed("IBKR IMPORT DEBUG (dates)");
+  // ---- Push cash_report rows (1 per currency) ----
+  const balances = cashReport.ending || {};
+  const asOf = latestIsoDate || isoToday();
+  const ts = `${asOf}T00:00:00`;
+
+  const wanted = ["AUD", "USD", "EUR"];
+  let pushedAny = false;
+
+  if (cashReport.seen) {
+    for (const ccy of wanted) {
+      if (balances[ccy] == null) continue;
+
+      out.push({
+        _tempId: makeTempId(idx++, "cash_report"),
+        tab: "cash_report",
+        date: asOf,
+        ts,
+        broker: "IBKR",
+        currency: ccy,
+        amount: balances[ccy],
+        label: "Ending Cash",
+        note: "IBKR Cash Report",
+      });
+
+      dbg.pushed.cash_report++;
+      pushedAny = true;
+    }
+  }
+
+  dbg.cashReportEnding = { ...balances };
+
+  console.groupCollapsed("IBKR IMPORT DEBUG (dates + cash report)");
   console.log("Rows pushed:", dbg.pushed);
   console.log("Bad cash dates:", dbg.badCashDates, dbg.sampleBadCash);
   console.log("Bad dividend dates:", dbg.badDividendDates, dbg.sampleBadDiv);
+  console.log("Cash report lines seen:", dbg.cashReportLinesSeen);
+  console.log("Cash report ending (raw):", dbg.cashReportEnding);
+  console.log("Cash report asOf (derived):", asOf);
+  console.log("Cash report pushed:", pushedAny);
   console.groupEnd();
 
   return out;

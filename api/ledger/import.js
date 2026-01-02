@@ -15,7 +15,7 @@ function normStr(x) {
   return String(x || "").trim();
 }
 function normNum(x) {
-  if (typeof x === "string") x = x.replace(/,/g, ""); // handle "1,706.13"
+  if (typeof x === "string") x = x.replace(/,/g, "");
   const n = Number(x);
   return Number.isFinite(n) ? n : 0;
 }
@@ -56,6 +56,13 @@ function makeImportKey(r) {
     return [broker, account, tab, tsOrDate, currency, ticker, amount.toFixed(8), note].join("|");
   }
 
+  // NEW: cash_report snapshot rows (Ending Cash by currency)
+  if (tab === "cash_report") {
+    const amount = normNum(r.amount);
+    const label = normStr(r.label || r.note || "Ending Cash");
+    return [broker, account, tab, tsOrDate, currency, label, amount.toFixed(8)].join("|");
+  }
+
   // trades/forex/crypto
   const ticker = normUpper(r.ticker || "");
   const qty = normNum(r.quantity);
@@ -69,9 +76,16 @@ async function ensureIndexes(db) {
   await db.collection("cash").createIndex({ importKey: 1 }, { unique: true, sparse: true });
   await db.collection("dividends").createIndex({ importKey: 1 }, { unique: true, sparse: true });
 
+  // NEW
+  await db.collection("cash_reports").createIndex({ importKey: 1 }, { unique: true, sparse: true });
+
   await db.collection("trades").createIndex({ date: 1, ticker: 1, broker: 1 });
   await db.collection("cash").createIndex({ date: 1, entryType: 1, broker: 1 });
   await db.collection("dividends").createIndex({ date: 1, ticker: 1, broker: 1 });
+
+  // NEW: query “latest ending cash”
+  await db.collection("cash_reports").createIndex({ broker: 1, currency: 1, ts: -1 });
+  await db.collection("cash_reports").createIndex({ date: 1 });
 }
 
 function extractBulkCounts(err, attempted) {
@@ -98,10 +112,12 @@ export default async function handler(req, res) {
     const tradesCol = db.collection("trades");
     const cashCol = db.collection("cash");
     const dividendsCol = db.collection("dividends");
+    const cashReportsCol = db.collection("cash_reports"); // NEW
 
     const tradeDocs = [];
     const cashDocs = [];
     const dividendDocs = [];
+    const cashReportDocs = []; // NEW
 
     for (const r of rows) {
       const tab = normStr(r.tab).toLowerCase();
@@ -150,6 +166,26 @@ export default async function handler(req, res) {
         continue;
       }
 
+      // NEW: cash_report snapshot rows
+      if (tab === "cash_report") {
+        const amount = normNum(r.amount);
+        if (!Number.isFinite(amount)) continue;
+
+        cashReportDocs.push({
+          date,
+          ts,
+          broker,
+          currency: normUpper(currency || "AUD"),
+          amount,
+          label: normStr(r.label || "Ending Cash"),
+          note: normStr(r.note || ""),
+          importKey: makeImportKey({ ...r, tab, date, ts, broker, currency, amount }),
+          createdAt: new Date(),
+          importedAt: new Date(),
+        });
+        continue;
+      }
+
       if (tab === "trades" || tab === "forex" || tab === "crypto") {
         const ticker = normUpper(r.ticker);
         if (!ticker) continue;
@@ -159,9 +195,8 @@ export default async function handler(req, res) {
 
         // cashflow in trade currency:
         // buy (qty>0) => proceeds negative; sell (qty<0) => proceeds positive
-        const proceeds = -(quantity * price);
+        const proceeds = r.proceeds != null ? normNum(r.proceeds) : -(quantity * price);
 
-        // IBKR "Comm in AUD" for many rows — keep fee currency explicitly
         const fee = Math.abs(normNum(r.fee));
         const feeCurrency = normUpper(r.feeCurrency || (broker === "IBKR" ? "AUD" : currency));
 
@@ -190,12 +225,13 @@ export default async function handler(req, res) {
     const out = {
       ok: true,
       received: rows.length,
-      kept: tradeDocs.length + cashDocs.length + dividendDocs.length,
-      dropped: rows.length - (tradeDocs.length + cashDocs.length + dividendDocs.length),
+      kept: tradeDocs.length + cashDocs.length + dividendDocs.length + cashReportDocs.length,
+      dropped: rows.length - (tradeDocs.length + cashDocs.length + dividendDocs.length + cashReportDocs.length),
 
       trades: { attempted: tradeDocs.length, inserted: 0, duplicates: 0, failed: 0 },
       cash: { attempted: cashDocs.length, inserted: 0, duplicates: 0, failed: 0 },
       dividends: { attempted: dividendDocs.length, inserted: 0, duplicates: 0, failed: 0 },
+      cash_report: { attempted: cashReportDocs.length, inserted: 0, duplicates: 0, failed: 0 }, // NEW
     };
 
     if (tradeDocs.length) {
@@ -222,6 +258,15 @@ export default async function handler(req, res) {
         out.dividends.inserted = r.insertedCount ?? dividendDocs.length;
       } catch (err) {
         out.dividends = extractBulkCounts(err, dividendDocs.length);
+      }
+    }
+
+    if (cashReportDocs.length) {
+      try {
+        const r = await cashReportsCol.insertMany(cashReportDocs, { ordered: false });
+        out.cash_report.inserted = r.insertedCount ?? cashReportDocs.length;
+      } catch (err) {
+        out.cash_report = extractBulkCounts(err, cashReportDocs.length);
       }
     }
 

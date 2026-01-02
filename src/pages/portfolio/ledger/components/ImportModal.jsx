@@ -31,7 +31,10 @@ function normStr(x) {
   return String(x || "").trim();
 }
 function normNum(x) {
-  const n = Number(x);
+  // allow "1,706.13" style too
+  const s = String(x ?? "").replace(/,/g, "").trim();
+  if (!s) return 0;
+  const n = Number(s);
   return Number.isFinite(n) ? n : 0;
 }
 
@@ -62,6 +65,14 @@ function makeImportKey(r) {
     return [broker, account, tab, tsOrDate, currency, ticker, amount.toFixed(8), note].join("|");
   }
 
+  // NEW: cash_report snapshot rows (category/value per currency/base)
+  // Keep it stable: broker|tab|tsOrDate|currency|label|amount
+  if (tab === "cash_report") {
+    const amount = normNum(r.amount);
+    const label = normStr(r.label || r.category || r.note || "");
+    return [broker, account, tab, tsOrDate, currency, label, amount.toFixed(8)].join("|");
+  }
+
   // trades/forex/crypto
   const ticker = normUpper(r.ticker || "");
   const qty = normNum(r.quantity);
@@ -73,6 +84,8 @@ function makeImportKey(r) {
 function isIncomplete(r) {
   const tab = normStr(r.tab).toLowerCase();
   const date = deriveDate(r);
+
+  // cash_report rows MUST have a date too (we'll default it in the parser later)
   if (!date) return true;
 
   if (tab === "cash") {
@@ -83,6 +96,11 @@ function isIncomplete(r) {
     if (r.amount === undefined || r.amount === null || r.amount === "") return true;
     // We want ticker for usability; IBKR sometimes missing -> flag for edit
     return !normStr(r.ticker);
+  }
+
+  // cash_report: only needs an amount
+  if (tab === "cash_report") {
+    return r.amount === undefined || r.amount === null || r.amount === "";
   }
 
   // trades/forex/crypto
@@ -107,12 +125,13 @@ export default function ImportModal({ onClose, onImported }) {
   const [err, setErr] = useState("");
 
   const counts = useMemo(() => {
-    const c = { trades: 0, forex: 0, cash: 0, dividends: 0 };
+    const c = { trades: 0, forex: 0, cash: 0, dividends: 0, cash_report: 0 };
     rows.forEach((r) => {
       if (r.tab === "trades") c.trades++;
       if (r.tab === "forex") c.forex++;
       if (r.tab === "cash") c.cash++;
       if (r.tab === "dividends") c.dividends++;
+      if (r.tab === "cash_report") c.cash_report++;
     });
     return c;
   }, [rows]);
@@ -262,14 +281,12 @@ export default function ImportModal({ onClose, onImported }) {
     try {
       const chosen = rows.filter((r) => selected[r._tempId]);
 
-      // ✅ graceful no-selection
       if (!chosen.length) {
         setErr("Nothing selected to import. Select at least one row.");
         setBusy(false);
         return;
       }
 
-      // block importing incomplete rows
       const stillBad = chosen.filter((r) => r.needsReview);
       if (stillBad.length) {
         setErr(
@@ -288,7 +305,6 @@ export default function ImportModal({ onClose, onImported }) {
       if (!res.ok) throw new Error(`Import failed: ${res.status}`);
       const json = await res.json();
 
-      // show a tiny summary if duplicates were skipped server-side
       if (
         (json?.trades?.duplicates || 0) +
           (json?.cash?.duplicates || 0) +
@@ -355,10 +371,10 @@ export default function ImportModal({ onClose, onImported }) {
                 <option value="forex">Forex</option>
                 <option value="cash">Cash (Dep/With)</option>
                 <option value="dividends">Dividends</option>
+                <option value="cash_report">Cash Report</option>
               </select>
             </label>
 
-            {/* ✅ Hide DUP */}
             <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <input type="checkbox" checked={hideDup} onChange={(e) => setHideDup(e.target.checked)} />
               Hide DUP
@@ -374,7 +390,7 @@ export default function ImportModal({ onClose, onImported }) {
         </div>
 
         <div style={{ marginTop: 10, fontSize: 13 }}>
-          Parsed: Trades {counts.trades} · Forex {counts.forex} · Cash {counts.cash} · Dividends {counts.dividends}
+          Parsed: Trades {counts.trades} · Forex {counts.forex} · Cash {counts.cash} · Dividends {counts.dividends} · Cash Report {counts.cash_report}
         </div>
 
         <div style={{ marginTop: 6, fontSize: 12, opacity: 0.8 }}>
@@ -452,11 +468,11 @@ export default function ImportModal({ onClose, onImported }) {
                   </td>
 
                   <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0", textAlign: "right" }}>
-                    {r.tab === "dividends" || r.tab === "cash" ? "" : r.price ?? ""}
+                    {r.tab === "dividends" || r.tab === "cash" || r.tab === "cash_report" ? "" : r.price ?? ""}
                   </td>
 
                   <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0", textAlign: "right" }}>
-                    {r.tab === "dividends" || r.tab === "cash" ? "" : r.fee ?? ""}
+                    {r.tab === "dividends" || r.tab === "cash" || r.tab === "cash_report" ? "" : r.fee ?? ""}
                   </td>
 
                   <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0", textAlign: "right" }}>
@@ -465,7 +481,9 @@ export default function ImportModal({ onClose, onImported }) {
 
                   <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0" }}>{r.currency}</td>
 
-                  <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0" }}>{r.note || ""}</td>
+                  <td style={{ padding: 8, borderBottom: "1px solid #f0f0f0" }}>
+                    {r.note || r.label || r.category || ""}
+                  </td>
                 </tr>
               ))}
 
@@ -482,7 +500,7 @@ export default function ImportModal({ onClose, onImported }) {
 
         <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
           Notes: Sells remain negative qty. Fees are stored as positive. Deposits/withdrawals become cash entries. Dividends
-          import into the dividends collection.
+          import into the dividends collection. Cash Report imports as snapshots (cash_report).
         </div>
       </div>
     </div>

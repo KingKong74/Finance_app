@@ -1,20 +1,24 @@
+// api/ledger/index.js
 import { connectToDB } from "../utils/db.js";
 
 function normaliseTab(tab) {
   const t = String(tab || "").toLowerCase();
-  const allowed = ["trades", "crypto", "forex", "cash", "dividends"];
+  // ✅ add cash_report
+  const allowed = ["trades", "crypto", "forex", "cash", "dividends", "cash_report"];
   return allowed.includes(t) ? t : null;
 }
 
 function collectionForTab(tab) {
   if (tab === "cash") return "cash";
   if (tab === "dividends") return "dividends";
+  if (tab === "cash_report") return "cash_reports"; // ✅ new collection
   return "trades"; // trades/crypto/forex live in "trades" collection with type
 }
 
 function queryForTab(tab) {
   if (tab === "cash") return {};
   if (tab === "dividends") return {};
+  if (tab === "cash_report") return {}; // ✅ snapshots, no type filter
   return { type: tab };
 }
 
@@ -37,11 +41,18 @@ export default async function handler(req, res) {
 
     if (req.method === "GET") {
       const query = queryForTab(tab);
+
+      // ✅ cash_report should sort by ts/date but doesn't need ticker/type logic
       const rows = await collection.find(query).sort({ date: -1, ts: -1 }).toArray();
       return res.status(200).json(rows);
     }
 
     if (req.method === "POST") {
+      // ✅ cash_report is import-only (comes from IBKR statement parsing)
+      if (tab === "cash_report") {
+        return res.status(405).json({ error: "cash_report is import-only" });
+      }
+
       const payload = req.body || {};
 
       // ───────────── CASH ─────────────
@@ -67,7 +78,7 @@ export default async function handler(req, res) {
         return res.status(201).json({ _id: result.insertedId });
       }
 
-      // ───────────── DIVIDENDS (Option B) ─────────────
+      // ───────────── DIVIDENDS ─────────────
       if (tab === "dividends") {
         if (!payload.date) return res.status(400).json({ error: "date is required" });
         if (payload.amount === undefined || payload.amount === null || payload.amount === "")
@@ -100,7 +111,12 @@ export default async function handler(req, res) {
         ts: deriveTs(payload),
         quantity: Number(payload.quantity || 0), // negative sells stay negative ✅
         price: Number(payload.price || 0),
+        proceeds:
+          payload.proceeds != null
+            ? Number(payload.proceeds || 0)
+            : -(Number(payload.quantity || 0) * Number(payload.price || 0)), // ✅ keep consistent with import.js
         fee: Math.abs(Number(payload.fee || 0)),
+        feeCurrency: payload.feeCurrency ? String(payload.feeCurrency).toUpperCase() : "AUD", // ✅ default
         broker: payload.broker || "IBKR",
         currency: payload.currency || "USD",
         realisedPL: Number(payload.realisedPL || 0),
