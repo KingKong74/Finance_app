@@ -67,14 +67,9 @@ export default function AccountsPanel({
 
               {isExpanded && (
                 <div className="account-details">
-                  <StatCard title="Total" value={`$${money(acc.total)}`} />
-                  <StatCard title="Cash" value={`$${money(acc.cash)}`} />
-                  <StatCard
-                    title="P/L (Unrealised)"
-                    value={`${Number(acc.pl || 0) >= 0 ? "+" : "-"}$${money(
-                      Math.abs(acc.pl || 0)
-                    )}`}
-                  />
+                  <StatCard title="Total" value={`$${acc.total.toLocaleString()}`} />
+                  <StatCard title="Cash" value={`$${acc.cash.toLocaleString()}`} />
+                  <StatCard title="Unrealised P/L" value={`$${acc.pl.toLocaleString()}`} />
 
                   {/* ---- DEBUG BREAKDOWN ---- */}
                   {acc.debug && (

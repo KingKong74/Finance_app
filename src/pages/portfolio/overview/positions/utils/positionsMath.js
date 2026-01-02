@@ -1,35 +1,19 @@
-// src/pages/portfolio/overview/positions/utils/positionsMath.js
-
 /**
  * FIFO open-position builder that supports BOTH long and short lots.
- *
- * NOW BROKER-AWARE:
- * key = broker|ticker|currency|type
- *
- * Conventions:
- * - quantity is signed: long > 0, short < 0
- * - lots store signed qty:
- *   - long lot:  { qty: +10, price: 100 }
- *   - short lot: { qty: -10, price: 100 }
- * - costBasis is the signed sum of open lots (plus fees applied as "cost drag"):
- *   - long:  positive cost basis
- *   - short: negative cost basis (represents proceeds from the short sale)
- *
- * With your UI formula:
- *   marketValue = quantity * marketPrice
- *   unrealised  = marketValue - costBasis
- * …this gives correct signs for shorts.
+ * Used for equities, crypto, AND forex.
  */
-export function buildPositionsFIFO(trades, { useLastTradeAsMarketPrice = true } = {}) {
+export function buildPositionsFIFO(
+  trades,
+  { useLastTradeAsMarketPrice = true } = {}
+) {
   const map = new Map();
 
   for (const t of trades) {
-    const broker = String(t.broker || "").trim() || "Unknown";
-    const key = `${broker}|${t.ticker}|${t.currency}|${t.type}`;
+    const key = `${t.broker}|${t.ticker}|${t.currency}|${t.type}`;
 
     if (!map.has(key)) {
       map.set(key, {
-        broker,
+        broker: t.broker,
         ticker: t.ticker,
         currency: t.currency,
         type: t.type,
@@ -44,7 +28,6 @@ export function buildPositionsFIFO(trades, { useLastTradeAsMarketPrice = true } 
 
     const p = map.get(key);
 
-    // last trade price fallback
     if (useLastTradeAsMarketPrice && t.price != null) {
       p.marketPrice = Number(t.price);
       p.lastDate = t.date;
@@ -56,23 +39,23 @@ export function buildPositionsFIFO(trades, { useLastTradeAsMarketPrice = true } 
     if (!q) continue;
 
     const sgn = (n) => (n > 0 ? 1 : n < 0 ? -1 : 0);
-
     let remaining = q;
 
-    while (remaining !== 0 && p.lots.length > 0 && sgn(p.lots[0].qty) !== sgn(remaining)) {
+    while (
+      remaining !== 0 &&
+      p.lots.length > 0 &&
+      sgn(p.lots[0].qty) !== sgn(remaining)
+    ) {
       const lot = p.lots[0];
-
       const lotSign = sgn(lot.qty);
       const takeAbs = Math.min(Math.abs(remaining), Math.abs(lot.qty));
 
-      lot.qty = lot.qty - lotSign * takeAbs;
-
+      lot.qty -= lotSign * takeAbs;
       p.quantity += -lotSign * takeAbs;
       p.costBasis -= lotSign * takeAbs * lot.price;
+      remaining -= sgn(remaining) * takeAbs;
 
-      remaining = remaining - sgn(remaining) * takeAbs;
-
-      if (Math.abs(lot.qty) <= 1e-12) p.lots.shift();
+      if (Math.abs(lot.qty) < 1e-12) p.lots.shift();
     }
 
     if (remaining !== 0) {
@@ -81,49 +64,31 @@ export function buildPositionsFIFO(trades, { useLastTradeAsMarketPrice = true } 
       p.costBasis += remaining * px;
     }
 
-    // fee as cost drag
     p.costBasis += fee;
-
     p.avgPrice = p.quantity !== 0 ? p.costBasis / p.quantity : null;
   }
 
-  const out = Array.from(map.values())
+  return Array.from(map.values())
     .filter((p) => Math.abs(p.quantity) > 1e-12)
     .map((p) => ({
-      broker: p.broker,
-      ticker: p.ticker,
-      currency: p.currency,
-      type: p.type,
-      quantity: p.quantity,
-      costBasis: p.costBasis,
-      avgPrice: p.avgPrice,
-      marketPrice: p.marketPrice,
-      lastDate: p.lastDate,
+      ...p,
       marketSource: useLastTradeAsMarketPrice ? "last-trade" : "none",
       marketAsOf: null,
     }));
-
-  out.sort((a, b) => {
-    const amv = a.marketPrice != null ? a.marketPrice * a.quantity : a.costBasis;
-    const bmv = b.marketPrice != null ? b.marketPrice * b.quantity : b.costBasis;
-    return Math.abs(bmv) - Math.abs(amv);
-  });
-
-  return out;
 }
 
-export function summariseCash(cashRows) {
-  const byCcy = new Map();
+/* ────────────────────────────────────────────── */
+/* NEW HELPERS                                    */
+/* ────────────────────────────────────────────── */
 
-  for (const c of cashRows) {
-    const key = c.currency;
-    if (!byCcy.has(key)) byCcy.set(key, 0);
+export function splitPositionsByType(positions) {
+  const equities = [];
+  const fx = [];
 
-    const sign = c.entryType === "withdrawal" ? -1 : 1;
-    byCcy.set(key, byCcy.get(key) + sign * Number(c.amount || 0));
+  for (const p of positions) {
+    if (p.type === "forex") fx.push(p);
+    else equities.push(p);
   }
 
-  return Array.from(byCcy.entries())
-    .map(([currency, balance]) => ({ currency, balance }))
-    .sort((a, b) => a.currency.localeCompare(b.currency));
+  return { equities, fx };
 }
