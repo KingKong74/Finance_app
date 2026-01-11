@@ -12,6 +12,9 @@ import pricesRefresh from "../server_api/prices/refresh.js";
 import overviewAccount from "../server_api/overview/account.js";
 import overviewCashReport from "../server_api/overview/cash-report.js";
 
+import txImportPreview from "../server_api/transactions/importPreview.js";
+import txImport from "../server_api/transactions/import.js";
+
 const table = {
   fx,
 
@@ -28,6 +31,10 @@ const table = {
   // overview
   "overview/account": overviewAccount,
   "overview/cash-report": overviewCashReport,
+
+  // transactions
+  "transactions/importPreview": txImportPreview,
+  "transactions/import": txImport,
 };
 
 function pickKey(action, sub) {

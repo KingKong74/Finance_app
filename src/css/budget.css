@@ -1,0 +1,398 @@
+/* src/css/budget.css */
+.b-wrap { padding: 18px; max-width: 1200px; margin: 0 auto; }
+.b-head { display:flex; align-items:flex-end; justify-content:space-between; gap: 12px; margin-bottom: 14px; }
+.b-h1 { margin: 0; font-size: 24px; }
+.b-subtle { color: rgba(0,0,0,.55); font-size: 13px; margin-top: 4px; }
+
+.b-grid4 { display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.b-grid2 { display:grid; grid-template-columns: 1.2fr .8fr; gap: 12px; margin-bottom: 12px; }
+
+.b-card { background:#fff; border:1px solid rgba(0,0,0,.08); border-radius: 14px; padding: 14px; box-shadow: 0 1px 10px rgba(0,0,0,.03); }
+.b-card__head { display:flex; align-items:flex-start; justify-content:space-between; gap: 10px; margin-bottom: 10px; }
+.b-title { font-weight: 650; }
+
+.b-kpi { background:#fff; border:1px solid rgba(0,0,0,.08); border-radius: 14px; padding: 12px; }
+.b-kpi__label { color: rgba(0,0,0,.55); font-size: 12px; }
+.b-kpi__value { font-size: 20px; font-weight: 700; margin-top: 6px; }
+.b-kpi__hint { color: rgba(0,0,0,.5); font-size: 12px; margin-top: 6px; }
+
+.is-pos { color: #0a7a2f; }
+.is-neg { color: #b42318; }
+
+.b-scenarios { display:flex; gap: 8px; }
+.b-pill { border:1px solid rgba(0,0,0,.12); background:#fff; border-radius: 999px; padding: 6px 10px; cursor:pointer; font-size: 13px; }
+.b-pill.is-on { border-color: rgba(0,0,0,.28); background: rgba(0,0,0,.04); }
+
+.b-split { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.b-minihead { font-weight: 650; margin-bottom: 6px; }
+.b-list { list-style:none; padding:0; margin:0; }
+.b-list__row { display:flex; align-items:center; justify-content:space-between; padding: 8px 0; border-bottom: 1px solid rgba(0,0,0,.06); }
+.b-list__row:last-child { border-bottom: none; }
+.b-list__name { color: rgba(0,0,0,.75); }
+.b-list__val { font-weight: 650; }
+
+.b-totalrow { display:flex; align-items:flex-end; justify-content:space-between; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(0,0,0,.08); }
+.b-total { font-weight: 800; font-size: 18px; }
+
+.b-btn { border:1px solid rgba(0,0,0,.12); background:#fff; border-radius: 10px; padding: 8px 10px; cursor:not-allowed; opacity:.6; }
+
+.b-tablewrap { overflow:auto; }
+.b-table { width:100%; border-collapse: collapse; }
+.b-table th, .b-table td { text-align:left; padding: 10px 8px; border-bottom: 1px solid rgba(0,0,0,.06); font-size: 13px; }
+
+.b-bars { height: 180px; display:flex; gap: 8px; align-items:flex-end; padding: 8px 2px; }
+.b-bars__col { flex: 1 1 0; display:flex; flex-direction:column; justify-content:flex-end; gap: 6px; }
+.b-bars__bar { width: 100%; background: rgba(0,0,0,.12); border-radius: 10px; min-height: 6px; }
+.b-bars__label { font-size: 11px; color: rgba(0,0,0,.55); text-align:center; }
+
+.b-note { margin-top: 10px; color: rgba(0,0,0,.55); font-size: 12px; }
+
+/* ───────────────────────────────────────────────────────────────
+   NEW: Overview tabs + charts
+   ─────────────────────────────────────────────────────────────── */
+.b-overviewHead {
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap: 12px;
+  margin: 4px 0 10px;
+}
+
+.b-tabs { display:flex; gap: 8px; }
+.b-tab {
+  border:1px solid rgba(0,0,0,.12);
+  background:#fff;
+  border-radius: 10px;
+  padding: 8px 10px;
+  cursor:pointer;
+  font-size: 13px;
+}
+.b-tab.is-on { border-color: rgba(0,0,0,.28); background: rgba(0,0,0,.04); }
+
+/* Pie */
+.b-pieRow { display:flex; gap: 14px; align-items:center; }
+.b-pie {
+  width: 140px;
+  height: 140px;
+  border-radius: 999px;
+  border: 1px solid rgba(0,0,0,.08);
+  box-shadow: inset 0 0 0 10px rgba(255,255,255,.75);
+}
+.b-legend { flex:1; display:flex; flex-direction:column; gap: 8px; }
+.b-legend__item { display:grid; grid-template-columns: 14px 1fr auto; gap: 8px; align-items:center; }
+.b-dot { width: 10px; height: 10px; border-radius: 999px; }
+.b-legend__label { color: rgba(0,0,0,.75); font-size: 13px; }
+.b-legend__pct { color: rgba(0,0,0,.55); font-size: 12px; }
+
+/* Mini legend chips */
+.b-miniLegend { display:flex; gap: 8px; flex-wrap: wrap; justify-content:flex-end; }
+.b-chip {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(0,0,0,.12);
+  background: rgba(0,0,0,.03);
+}
+.b-chip--line {
+  background: rgba(0,0,0,.06);
+}
+.b-chip--alt {
+  background: rgba(0,0,0,.06);
+}
+
+/* Column + Line mix chart */
+.b-mixChart {
+  position: relative;
+  height: 190px;
+  display:flex;
+  gap: 10px;
+  align-items:flex-end;
+  padding: 8px 2px 0;
+}
+.b-mixChart.is-compact { gap: 4px; } /* “no space between columns” vibe */
+.b-mixChart__col { flex: 1 1 0; display:flex; flex-direction:column; justify-content:flex-end; gap: 6px; z-index: 2; }
+.b-mixChart__bar {
+  width: 100%;
+  background: rgba(0,0,0,.14);
+  border-radius: 10px;
+  min-height: 6px;
+}
+.b-mixChart__label { font-size: 11px; color: rgba(0,0,0,.55); text-align:center; }
+.b-mixChart__svg {
+  position:absolute;
+  inset: 6px 2px 22px 2px;
+  z-index: 1;
+  pointer-events:none;
+}
+.b-mixChart__poly {
+  fill: none;
+  stroke: rgba(0,0,0,.55);
+  stroke-width: 1.3;
+}
+.b-mixChart__fill {
+  fill: rgba(0,0,0,.08);
+}
+
+/* Grouped Budget vs Actual */
+.b-groupChart {
+  height: 190px;
+  display:flex;
+  gap: 10px;
+  align-items:flex-end;
+  padding: 8px 2px 0;
+}
+.b-groupChart.is-gapless { gap: 4px; }
+.b-groupChart__item { flex: 1 1 0; display:flex; flex-direction:column; justify-content:flex-end; gap: 6px; }
+.b-groupChart__bars { display:flex; gap: 6px; align-items:flex-end; height: 160px; }
+.b-groupChart.is-gapless .b-groupChart__bars { gap: 2px; }
+.b-groupChart__bar {
+  flex: 1 1 0;
+  background: rgba(0,0,0,.14);
+  border-radius: 10px;
+  min-height: 6px;
+}
+.b-groupChart__bar--alt { background: rgba(0,0,0,.24); }
+.b-groupChart__label { font-size: 11px; color: rgba(0,0,0,.55); text-align:center; }
+
+/* Savings */
+.b-savingsChart {
+  height: 190px;
+  display:flex;
+  gap: 10px;
+  align-items:flex-end;
+  padding: 8px 2px 0;
+}
+.b-savingsChart__col { flex: 1 1 0; display:flex; flex-direction:column; justify-content:flex-end; gap: 6px; }
+.b-savingsChart__bar {
+  width: 100%;
+  border-radius: 10px;
+  min-height: 6px;
+  background: rgba(0,0,0,.12);
+}
+.b-savingsChart__bar.is-pos { background: rgba(10,122,47,.22); }
+.b-savingsChart__bar.is-neg { background: rgba(180,35,24,.22); }
+.b-savingsChart__label { font-size: 11px; color: rgba(0,0,0,.55); text-align:center; }
+
+/* Cashflow summary */
+.b-cfGrid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.b-cfItem { border: 1px solid rgba(0,0,0,.08); border-radius: 12px; padding: 10px; background: rgba(0,0,0,.02); }
+.b-cfLabel { font-size: 12px; color: rgba(0,0,0,.55); }
+.b-cfVal { font-size: 18px; font-weight: 750; margin-top: 6px; }
+
+@media (max-width: 980px) {
+  .b-grid4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .b-grid2 { grid-template-columns: 1fr; }
+  .b-pieRow { flex-direction: column; align-items:flex-start; }
+  .b-cfGrid { grid-template-columns: 1fr; }
+}
+
+/* ───────────────────────────────────────────────────────────────
+   Visual polish upgrades (paste at bottom)
+   ─────────────────────────────────────────────────────────────── */
+
+.b-card {
+  background: linear-gradient(180deg, rgba(255,255,255,1), rgba(250,250,250,1));
+}
+
+.b-title { letter-spacing: -0.2px; }
+.b-subtle { line-height: 1.35; }
+
+.b-kpi {
+  background: linear-gradient(180deg, rgba(255,255,255,1), rgba(247,247,247,1));
+  position: relative;
+  overflow: hidden;
+}
+.b-kpi:before {
+  content: "";
+  position: absolute;
+  inset: -60px -60px auto auto;
+  width: 140px;
+  height: 140px;
+  background: radial-gradient(circle at 30% 30%, rgba(0,0,0,.06), transparent 60%);
+  pointer-events: none;
+}
+
+.b-inlineTag{
+  display:inline-block;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(0,0,0,.10);
+  background: rgba(0,0,0,.04);
+  font-size: 12px;
+}
+
+/* Chart area grids */
+.b-bars,
+.b-mixChart,
+.b-groupChart,
+.b-savingsChart{
+  border-radius: 12px;
+  background:
+    linear-gradient(to top, rgba(0,0,0,.06) 1px, transparent 1px) 0 0 / 100% 25%,
+    linear-gradient(to top, rgba(0,0,0,.03) 1px, transparent 1px) 0 0 / 100% 12.5%;
+  padding: 10px 8px 6px;
+}
+
+/* Bar styles (depth + hover) */
+.b-bars__bar,
+.b-mixChart__bar,
+.b-groupChart__bar,
+.b-savingsChart__bar{
+  border: 1px solid rgba(0,0,0,.10);
+  background: rgba(0,0,0,.10);
+  border-radius: 10px;
+  position: relative;
+  overflow: hidden;
+  transition: transform .12s ease, filter .12s ease;
+}
+
+.b-bars__barInner,
+.b-mixChart__barInner,
+.b-groupChart__barInner,
+.b-savingsChart__barInner{
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255,255,255,.35), transparent 60%);
+}
+
+.b-bars__col:hover .b-bars__bar,
+.b-mixChart__col:hover .b-mixChart__bar,
+.b-groupChart__item:hover .b-groupChart__bar,
+.b-savingsChart__col:hover .b-savingsChart__bar{
+  transform: translateY(-2px);
+  filter: brightness(1.05);
+}
+
+.b-bars__label,
+.b-mixChart__label,
+.b-groupChart__label,
+.b-savingsChart__label{
+  letter-spacing: -0.2px;
+}
+
+/* Mix chart overlay line nicer */
+.b-mixChart__poly{
+  stroke: rgba(0,0,0,.65);
+  stroke-width: 1.6;
+}
+.b-mixChart__fill{
+  fill: rgba(0,0,0,.06);
+}
+
+/* Alternate bars contrast */
+.b-groupChart__bar--alt{
+  background: rgba(0,0,0,.20);
+}
+
+/* Savings positive/negative better contrast */
+.b-savingsChart__bar.is-pos{
+  background: rgba(10,122,47,.20);
+  border-color: rgba(10,122,47,.25);
+}
+.b-savingsChart__bar.is-neg{
+  background: rgba(180,35,24,.18);
+  border-color: rgba(180,35,24,.22);
+}
+
+/* Tabs + pills feel nicer */
+.b-pill, .b-tab{
+  transition: transform .12s ease, background .12s ease, border-color .12s ease;
+}
+.b-pill:hover, .b-tab:hover{
+  transform: translateY(-1px);
+}
+.b-pill.is-on, .b-tab.is-on{
+  background: rgba(0,0,0,.06);
+  border-color: rgba(0,0,0,.28);
+}
+
+/* Pie styling */
+.b-pie{
+  box-shadow: inset 0 0 0 10px rgba(255,255,255,.75), 0 10px 25px rgba(0,0,0,.06);
+}
+
+/* ───────────────────────────────────────────────────────────────
+   Recharts skin (paste at bottom)
+   ─────────────────────────────────────────────────────────────── */
+
+.b-chart {
+  height: 260px;
+  border-radius: 12px;
+  border: 1px solid rgba(0,0,0,.06);
+  background:
+    linear-gradient(to top, rgba(0,0,0,.05) 1px, transparent 1px) 0 0 / 100% 25%,
+    linear-gradient(to top, rgba(0,0,0,.025) 1px, transparent 1px) 0 0 / 100% 12.5%;
+  padding: 10px;
+}
+
+.b-chart--pie {
+  height: 280px;
+}
+
+/* Recharts text */
+.recharts-text {
+  font-size: 12px;
+  fill: rgba(0,0,0,.65);
+}
+
+/* Grid */
+.recharts-cartesian-grid line {
+  stroke: rgba(0,0,0,.08);
+}
+
+/* Axes */
+.recharts-cartesian-axis-line,
+.recharts-cartesian-axis-tick-line {
+  stroke: rgba(0,0,0,.12);
+}
+
+/* Legend */
+.recharts-legend-item-text {
+  color: rgba(0,0,0,.70) !important;
+  font-size: 12px;
+}
+.recharts-default-legend {
+  padding-top: 6px !important;
+}
+
+/* Tooltip */
+.b-tt {
+  background: rgba(255,255,255,.95);
+  border: 1px solid rgba(0,0,0,.12);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.10);
+  padding: 10px 12px;
+  backdrop-filter: blur(6px);
+}
+.b-tt__label {
+  font-size: 12px;
+  color: rgba(0,0,0,.60);
+  margin-bottom: 6px;
+}
+.b-tt__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  padding: 3px 0;
+}
+.b-tt__name { color: rgba(0,0,0,.70); }
+.b-tt__val { font-weight: 700; }
+
+/* Make bars/areas look nicer */
+.recharts-bar-rectangle path {
+  stroke: rgba(0,0,0,.10);
+}
+.recharts-area-area {
+  fill-opacity: .22;
+}
+.recharts-line-curve {
+  stroke-opacity: .85;
+}
+
+/* Small responsive tweak: charts slightly shorter */
+@media (max-width: 980px) {
+  .b-chart { height: 240px; }
+  .b-chart--pie { height: 260px; }
+}
