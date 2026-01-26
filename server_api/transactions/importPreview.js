@@ -1,6 +1,6 @@
 // server_api/transactions/importPreview.js
 
-import pdf from "pdf-parse";
+import { default as pdfParse } from "pdf-parse";
 import { parseStatement } from "./parsers/index.js";
 
 /**
@@ -37,7 +37,7 @@ export default async function txImportPreview(req, res) {
     
     if (ext === "pdf" || mime === "application/pdf") {
       try {
-        const pdfData = await pdf(buf);
+        const pdfData = await pdfParse(buf);
         text = pdfData?.text || "";
         fileType = "pdf";
       } catch (err) {
