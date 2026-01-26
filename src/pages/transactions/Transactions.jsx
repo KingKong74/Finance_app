@@ -1,8 +1,11 @@
+// src/pages/transactions/Transactions.jsx
+
 import React, { useMemo, useState } from "react";
 import "../../css/transactions.css";
 
 import BankingToolbar from "./components/BankingToolbar";
 import TransactionsTable from "./components/TransactionsTable";
+import TransactionImportModal from "./components/TransactionImportModal";
 import { mockTransactions, mockAccounts } from "./data/mockTransactions";
 
 function fileToBase64(file) {
@@ -28,7 +31,7 @@ export default function Transactions() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [filterOpen, setFilterOpen] = useState(false);
 
-  // NEW: import state for toolbar
+  // Import state
   const [importState, setImportState] = useState({
     status: "idle", // idle | importing | preview | error
     lastSyncAt: null,
@@ -36,6 +39,9 @@ export default function Transactions() {
     lastCount: null,
     message: "",
   });
+
+  // Preview modal state
+  const [previewData, setPreviewData] = useState(null);
 
   const rows = useMemo(() => {
     const from = new Date(dateFrom);
@@ -64,11 +70,17 @@ export default function Transactions() {
   function toggleSelectAll() {
     const ids = rows.slice(0, 50).map((r) => r.id);
     const allSelected = ids.every((id) => selectedIds.includes(id));
-    setSelectedIds(allSelected ? selectedIds.filter((id) => !ids.includes(id)) : Array.from(new Set([...selectedIds, ...ids])));
+    setSelectedIds(
+      allSelected
+        ? selectedIds.filter((id) => !ids.includes(id))
+        : Array.from(new Set([...selectedIds, ...ids]))
+    );
   }
 
   function toggleSelectOne(id) {
-    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id].slice(0, 50)));
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id].slice(0, 50)
+    );
   }
 
   async function onImportFile(file) {
@@ -76,11 +88,13 @@ export default function Transactions() {
 
     const ext = file.name.split(".").pop()?.toLowerCase();
     if (!["pdf", "csv", "txt"].includes(ext)) {
-      setImportState((s) => ({
-        ...s,
+      setImportState({
         status: "error",
+        lastSyncAt: Date.now(),
+        lastFilename: file.name,
+        lastCount: null,
         message: "Unsupported file type. Use .csv, .pdf, or .txt",
-      }));
+      });
       return;
     }
 
@@ -118,17 +132,17 @@ export default function Transactions() {
         return;
       }
 
-      // For now: just show preview in console; next step we’ll render a preview modal + “Save to DB”
-      console.log("Import preview:", data);
-
+      // Show preview modal
+      setPreviewData(data);
       setImportState({
         status: "preview",
         lastSyncAt: Date.now(),
         lastFilename: file.name,
-        lastCount: data?.count ?? (Array.isArray(data?.transactions) ? data.transactions.length : null),
-        message: "Preview ready. Next: review + save to DB with dedupe.",
+        lastCount: data?.count ?? data?.transactions?.length ?? 0,
+        message: "Preview ready",
       });
     } catch (e) {
+      console.error("Import error:", e);
       setImportState({
         status: "error",
         lastSyncAt: Date.now(),
@@ -137,6 +151,25 @@ export default function Transactions() {
         message: e?.message || "Import failed",
       });
     }
+  }
+
+  function closeModal() {
+    setPreviewData(null);
+    // Keep import state so user can see "last imported" info
+  }
+
+  async function onImported() {
+    // TODO: Refresh transactions from DB
+    // For now, just close modal and update state
+    setPreviewData(null);
+    setImportState((prev) => ({
+      ...prev,
+      status: "idle",
+      message: "Import complete",
+    }));
+
+    // In production, fetch real transactions here:
+    // await fetchTransactions();
   }
 
   return (
@@ -172,7 +205,9 @@ export default function Transactions() {
       />
 
       <div className="tx-subRow">
-        <div className="tx-subText">{selectedIds.length} transactions selected (max 50)</div>
+        <div className="tx-subText">
+          {selectedIds.length} transactions selected (max 50)
+        </div>
       </div>
 
       <TransactionsTable
@@ -182,6 +217,15 @@ export default function Transactions() {
         toggleSelectAll={toggleSelectAll}
         toggleSelectOne={toggleSelectOne}
       />
+
+      {/* Import Preview Modal */}
+      {previewData && (
+        <TransactionImportModal
+          previewData={previewData}
+          onClose={closeModal}
+          onImported={onImported}
+        />
+      )}
     </div>
   );
 }
