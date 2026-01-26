@@ -1,74 +1,122 @@
+// server_api/transactions/importPreview.js (FULLY UPDATED)
+
 import pdf from "pdf-parse";
-import { parseAnzStatementText } from "./parsers/anzStatementText.js";
-import { parseGenericCsv } from "./parsers/genericCsv.js";
+import { parseStatement } from "./parsers/index.js";
 
-// NOTE: keep this fast. Preview should NOT write to DB.
-
-function bad(res, msg, extra = {}) {
-  return res.status(400).json({ error: msg, ...extra });
-}
-
+/**
+ * IMPORT PREVIEW API
+ * 
+ * POST /api/transactions/importPreview
+ * Body: { filename, mime, base64 }
+ * 
+ * Returns: { provider, accountId, transactions[], warnings[], metadata }
+ * 
+ * This is step 1: parse and preview. User reviews, then calls /import.
+ */
 export default async function txImportPreview(req, res) {
   try {
-    if (req.method !== "POST") return bad(res, "Use POST");
+    if (req.method !== "POST") {
+      return res.status(405).json({ error: "Use POST" });
+    }
 
     const { filename, mime, base64 } = req.body || {};
-    if (!base64) return bad(res, "Missing base64");
+    
+    if (!base64) {
+      return res.status(400).json({ error: "Missing base64" });
+    }
 
     const ext = String(filename || "").split(".").pop()?.toLowerCase();
-
-    // decode
     const buf = Buffer.from(base64, "base64");
-
-    // Decide parse path
+    
+    let text = "";
+    let fileType = ext;
+    
+    // ────────────────────────────────────────────────────────────
+    // 1. EXTRACT TEXT FROM PDF
+    // ────────────────────────────────────────────────────────────
+    
     if (ext === "pdf" || mime === "application/pdf") {
-      const out = await pdf(buf);
-      const text = out?.text || "";
-
-      // ANZ statement text parser (the one we wrote earlier)
-      const parsed = parseAnzStatementText(text);
-
-      return res.status(200).json({
-        kind: "statement_pdf",
-        provider: "ANZ",
-        accountId: parsed.accountId,
-        period: parsed.period,
-        count: parsed.transactions.length,
-        transactions: parsed.transactions.slice(0, 200), // cap preview
-        warnings: parsed.warnings || [],
+      try {
+        const pdfData = await pdf(buf);
+        text = pdfData?.text || "";
+        fileType = "pdf";
+      } catch (err) {
+        return res.status(400).json({
+          error: "Failed to parse PDF",
+          message: err.message,
+        });
+      }
+    } else if (ext === "txt") {
+      text = buf.toString("utf8");
+      fileType = "txt";
+    } else {
+      return res.status(400).json({
+        error: "Unsupported file type. Please upload a PDF bank statement.",
+        supported: [".pdf"],
+        got: ext,
       });
     }
-
-    if (ext === "csv") {
-      const text = buf.toString("utf8");
-      const parsed = parseGenericCsv(text);
-
-      return res.status(200).json({
-        kind: "csv",
-        provider: parsed.provider || "UNKNOWN",
-        count: parsed.transactions.length,
-        transactions: parsed.transactions.slice(0, 200),
-        warnings: parsed.warnings || [],
+    
+    if (!text || text.length < 10) {
+      return res.status(400).json({
+        error: "File appears to be empty or unreadable. Please check the PDF is not password-protected.",
       });
     }
-
-    if (ext === "txt") {
-      const text = buf.toString("utf8");
-      const parsed = parseAnzStatementText(text);
-      return res.status(200).json({
-        kind: "statement_text",
-        provider: "ANZ",
-        accountId: parsed.accountId,
-        period: parsed.period,
-        count: parsed.transactions.length,
-        transactions: parsed.transactions.slice(0, 200),
-        warnings: parsed.warnings || [],
+    
+    // ────────────────────────────────────────────────────────────
+    // 2. PARSE STATEMENT USING MASTER PARSER
+    // ────────────────────────────────────────────────────────────
+    
+    let parsed;
+    
+    try {
+      parsed = await parseStatement(text, filename, fileType);
+    } catch (err) {
+      return res.status(400).json({
+        error: "Failed to parse statement",
+        message: err.message,
+        hint: "This bank may not be supported yet. Currently supported: ANZ.",
       });
     }
-
-    return bad(res, "Unsupported file type. Use PDF, CSV, or TXT.", { got: { filename, mime } });
-  } catch (e) {
-    console.error("tx importPreview error:", e);
-    return res.status(500).json({ error: e.message || "Server error" });
+    
+    if (!parsed || !parsed.transactions || parsed.transactions.length === 0) {
+      return res.status(400).json({
+        error: "No transactions found in statement",
+        provider: parsed?.provider || "UNKNOWN",
+        warnings: parsed?.warnings || [],
+        hint: "The statement format may not be recognized. Please check it's a valid bank statement.",
+      });
+    }
+    
+    // ────────────────────────────────────────────────────────────
+    // 3. RETURN PREVIEW WITH FULL DETAILS
+    // ────────────────────────────────────────────────────────────
+    
+    return res.status(200).json({
+      ok: true,
+      provider: parsed.provider,
+      accountId: parsed.accountId,
+      accountType: parsed.accountType || "transaction",
+      period: parsed.period,
+      count: parsed.transactions.length,
+      
+      // Return ALL transactions (not capped) since user will review in UI
+      transactions: parsed.transactions,
+      
+      warnings: parsed.warnings || [],
+      
+      metadata: {
+        filename,
+        fileType,
+        parsedAt: new Date().toISOString(),
+      },
+    });
+    
+  } catch (err) {
+    console.error("Import preview error:", err);
+    return res.status(500).json({
+      error: "Server error during parse",
+      message: err.message,
+    });
   }
 }
