@@ -1,3 +1,4 @@
+// src/pages/budget/Budget.jsx
 import React, { useMemo, useState } from "react";
 import "../../css/budget.css";
 

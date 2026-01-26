@@ -3,15 +3,31 @@
 /**
  * GENERIC PDF PARSER
  * 
- * Attempts to extract transactions from unknown bank statement PDFs.
+ * Fallback parser for unknown bank statements.
  * Uses heuristics to detect transaction patterns.
- * 
- * Common patterns:
- * - Date columns (DD/MM/YYYY or similar)
- * - Description text
- * - Amount columns (with $ or numbers)
- * - Balance columns (optional)
  */
+
+function toIsoDate(dmy) {
+  if (!dmy) return "";
+  
+  const parts = dmy.split("/");
+  if (parts.length !== 3) return "";
+  
+  let [dd, mm, yyyy] = parts;
+  
+  // Handle 2-digit year
+  if (yyyy.length === 2) {
+    yyyy = parseInt(yyyy, 10) > 50 ? `19${yyyy}` : `20${yyyy}`;
+  }
+  
+  return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
+}
+
+function cleanMoney(s) {
+  const cleaned = String(s).replace(/\$/g, "").replace(/,/g, "").trim();
+  return parseFloat(cleaned) || 0;
+}
+
 export function parseGenericPdf(rawText) {
   const lines = String(rawText || "")
     .replace(/\r/g, "")
@@ -22,13 +38,9 @@ export function parseGenericPdf(rawText) {
   const transactions = [];
   const warnings = [];
 
-  // ────────────────────────────────────────────────────────────
-  // HEURISTIC 1: Look for date patterns followed by amount
+  // Heuristic: Look for date patterns followed by amounts
   // Pattern: DD/MM/YYYY ... $XXX.XX or XXX.XX
-  // ────────────────────────────────────────────────────────────
-  
   for (const l of lines) {
-    // Match: date (DD/MM/YYYY) + description + amount + optional balance
     const pattern1 = l.match(
       /(\d{1,2}\/\d{1,2}\/\d{4})\s+(.+?)\s+\$?([0-9,]+\.[0-9]{2})(?:\s+\$?([0-9,]+\.[0-9]{2}))?/
     );
@@ -53,11 +65,7 @@ export function parseGenericPdf(rawText) {
     }
   }
 
-  // ────────────────────────────────────────────────────────────
-  // HEURISTIC 2: Table with headers
-  // Look for: Date | Description | Debit | Credit | Balance
-  // ────────────────────────────────────────────────────────────
-  
+  // Check for table headers
   const headerIdx = lines.findIndex((l) =>
     /date.*description.*amount|date.*details.*debit/i.test(l)
   );
@@ -74,8 +82,9 @@ export function parseGenericPdf(rawText) {
       period: null,
       transactions: [],
       warnings: [
-        "Could not detect transaction format. This statement may require a custom parser.",
-        "Please provide a sample to add support for this bank.",
+        "Could not detect transaction format.",
+        "This bank may not be supported yet.",
+        "Currently supported: ANZ credit card statements."
       ],
     };
   }
@@ -86,33 +95,9 @@ export function parseGenericPdf(rawText) {
     accountType: "transaction",
     period: null,
     transactions,
-    warnings: warnings.length > 0 ? warnings : ["Parsed using generic heuristics. Please verify accuracy."],
+    warnings: warnings.length > 0 ? warnings : [
+      "Parsed using generic heuristics.",
+      "Please verify transaction accuracy."
+    ],
   };
-}
-
-/**
- * CONVERT DATE: DD/MM/YYYY → YYYY-MM-DD
- */
-function toIsoDate(dmy) {
-  if (!dmy) return "";
-  
-  const parts = dmy.split("/");
-  if (parts.length !== 3) return "";
-  
-  let [dd, mm, yyyy] = parts;
-  
-  // Handle 2-digit year
-  if (yyyy.length === 2) {
-    yyyy = parseInt(yyyy, 10) > 50 ? `19${yyyy}` : `20${yyyy}`;
-  }
-  
-  return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
-}
-
-/**
- * CLEAN MONEY: "$1,463.90" → 1463.90
- */
-function cleanMoney(s) {
-  const cleaned = String(s).replace(/\$/g, "").replace(/,/g, "").trim();
-  return parseFloat(cleaned) || 0;
 }
