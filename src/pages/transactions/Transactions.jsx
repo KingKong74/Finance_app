@@ -7,19 +7,7 @@ import BankingToolbar from "./components/BankingToolbar";
 import TransactionsTable from "./components/TransactionsTable";
 import TransactionImportModal from "./components/TransactionImportModal";
 import { mockTransactions, mockAccounts } from "./data/mockTransactions";
-
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => {
-      const s = String(r.result || "");
-      const base64 = s.split(",")[1] || "";
-      resolve(base64);
-    };
-    r.onerror = reject;
-    r.readAsDataURL(file);
-  });
-}
+import { parseAnzPdf } from "./utils/parseAnzPdf";
 
 export default function Transactions() {
   // UI state
@@ -31,17 +19,10 @@ export default function Transactions() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [filterOpen, setFilterOpen] = useState(false);
 
-  // Import state
-  const [importState, setImportState] = useState({
-    status: "idle", // idle | importing | preview | error
-    lastSyncAt: null,
-    lastFilename: "",
-    lastCount: null,
-    message: "",
-  });
-
   // Preview modal state
   const [previewData, setPreviewData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   const rows = useMemo(() => {
     const from = new Date(dateFrom);
@@ -83,93 +64,55 @@ export default function Transactions() {
     );
   }
 
+  // Parse PDF and show preview
   async function onImportFile(file) {
     if (!file) return;
 
     const ext = file.name.split(".").pop()?.toLowerCase();
-    if (!["pdf", "csv", "txt"].includes(ext)) {
-      setImportState({
-        status: "error",
-        lastSyncAt: Date.now(),
-        lastFilename: file.name,
-        lastCount: null,
-        message: "Unsupported file type. Use .csv, .pdf, or .txt",
-      });
+    
+    if (ext !== "pdf") {
+      setError("Please select a PDF file");
+      setTimeout(() => setError(null), 3000);
       return;
     }
 
+    setLoading(true);
+    setError(null);
+
     try {
-      setImportState({
-        status: "importing",
-        lastSyncAt: importState.lastSyncAt,
-        lastFilename: file.name,
-        lastCount: null,
-        message: "Uploading and parsing…",
-      });
+      console.log("Parsing PDF:", file.name);
+      
+      // Parse the PDF file
+      const parsed = await parseAnzPdf(file);
+      
+      console.log("Parsed result:", parsed);
 
-      const base64 = await fileToBase64(file);
-
-      const res = await fetch("/api?action=transactions&sub=importPreview", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          filename: file.name,
-          mime: file.type,
-          base64,
-        }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setImportState({
-          status: "error",
-          lastSyncAt: Date.now(),
-          lastFilename: file.name,
-          lastCount: null,
-          message: data?.error || "Import failed",
-        });
-        return;
+      if (!parsed.transactions || parsed.transactions.length === 0) {
+        throw new Error("No transactions found in PDF. Make sure this is an ANZ credit card statement.");
       }
 
-      // Show preview modal
-      setPreviewData(data);
-      setImportState({
-        status: "preview",
-        lastSyncAt: Date.now(),
-        lastFilename: file.name,
-        lastCount: data?.count ?? data?.transactions?.length ?? 0,
-        message: "Preview ready",
+      // Show preview modal with parsed data
+      setPreviewData({
+        ...parsed,
+        count: parsed.transactions.length,
       });
-    } catch (e) {
-      console.error("Import error:", e);
-      setImportState({
-        status: "error",
-        lastSyncAt: Date.now(),
-        lastFilename: file?.name || "",
-        lastCount: null,
-        message: e?.message || "Import failed",
-      });
+
+    } catch (err) {
+      console.error("Parse error:", err);
+      setError(err.message || "Failed to parse PDF");
+      setTimeout(() => setError(null), 5000);
+    } finally {
+      setLoading(false);
     }
   }
 
   function closeModal() {
     setPreviewData(null);
-    // Keep import state so user can see "last imported" info
   }
 
-  async function onImported() {
-    // TODO: Refresh transactions from DB
-    // For now, just close modal and update state
+  function onImported() {
+    alert(`Successfully imported ${previewData?.transactions?.length || 0} transactions!\n\n(Demo mode - not saved to database yet)`);
     setPreviewData(null);
-    setImportState((prev) => ({
-      ...prev,
-      status: "idle",
-      message: "Import complete",
-    }));
-
-    // In production, fetch real transactions here:
-    // await fetchTransactions();
   }
 
   return (
@@ -201,8 +144,20 @@ export default function Transactions() {
         filterOpen={filterOpen}
         setFilterOpen={setFilterOpen}
         onImportFile={onImportFile}
-        importState={importState}
       />
+
+      {/* Loading/Error Messages */}
+      {loading && (
+        <div className="tx-import-status tx-import-status--loading">
+          📄 Parsing PDF...
+        </div>
+      )}
+      
+      {error && (
+        <div className="tx-import-status tx-import-status--error">
+          ❌ {error}
+        </div>
+      )}
 
       <div className="tx-subRow">
         <div className="tx-subText">

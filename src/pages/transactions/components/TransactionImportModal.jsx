@@ -24,9 +24,6 @@ export default function TransactionImportModal({ previewData, onClose, onImporte
     });
     return sel;
   });
-  
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
 
   const transactions = previewData?.transactions || [];
   const provider = previewData?.provider || "UNKNOWN";
@@ -47,48 +44,12 @@ export default function TransactionImportModal({ previewData, onClose, onImporte
     setSelected((prev) => ({ ...prev, [idx]: !prev[idx] }));
   }
 
-  async function handleImport() {
-    setError("");
-    setBusy(true);
-
-    try {
-      const chosen = transactions.filter((_, idx) => selected[idx]);
-
-      if (chosen.length === 0) {
-        setError("No transactions selected. Select at least one transaction to import.");
-        setBusy(false);
-        return;
-      }
-
-      const res = await fetch("/api?action=transactions&sub=import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          transactions: chosen,
-          metadata: {
-            provider,
-            accountId,
-            filename: previewData?.metadata?.filename || "",
-            importedAt: new Date().toISOString(),
-          },
-        }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data?.error || "Import failed");
-      }
-
-      // Success!
-      alert(`Successfully imported ${data.imported} transaction(s)!\n${data.skipped} duplicate(s) skipped.`);
-      onImported();
-    } catch (err) {
-      console.error("Import error:", err);
-      setError(err.message || "Import failed");
-    } finally {
-      setBusy(false);
+  function handleImport() {
+    if (selectedCount === 0) {
+      alert("Please select at least one transaction");
+      return;
     }
+    onImported();
   }
 
   return (
@@ -139,15 +100,13 @@ export default function TransactionImportModal({ previewData, onClose, onImporte
             <button
               className="tx-btn tx-btn--primary"
               onClick={handleImport}
-              disabled={busy || selectedCount === 0}
+              disabled={selectedCount === 0}
               type="button"
             >
-              {busy ? "Importing..." : `Import ${selectedCount} Transaction${selectedCount !== 1 ? "s" : ""}`}
+              Import {selectedCount} Transaction{selectedCount !== 1 ? "s" : ""}
             </button>
           </div>
         </div>
-
-        {error && <div className="tx-modal-error">{error}</div>}
 
         <div className="tx-modal-table-wrap">
           <table className="tx-modal-table">
@@ -189,13 +148,8 @@ export default function TransactionImportModal({ previewData, onClose, onImporte
                   </td>
                   <td className="tx-modal-td">
                     <div className="tx-modal-desc">{tx.description}</div>
-                    {tx.foreign && (
-                      <div className="tx-modal-sub">
-                        Foreign: {tx.foreign.amount} {tx.foreign.currency}
-                      </div>
-                    )}
-                    {tx.fees > 0 && (
-                      <div className="tx-modal-sub">Fees: {fmtMoney(tx.fees)}</div>
+                    {tx.cardLast4 && (
+                      <div className="tx-modal-sub">Card: **** {tx.cardLast4}</div>
                     )}
                   </td>
                   <td className="tx-modal-td tx-modal-td--num">
@@ -214,7 +168,7 @@ export default function TransactionImportModal({ previewData, onClose, onImporte
 
         <div className="tx-modal-footer">
           <div className="tx-modal-footnote">
-            Duplicates will be automatically detected and skipped based on transaction details.
+            Click rows to select/deselect. In production, duplicates will be automatically detected.
           </div>
         </div>
       </div>
