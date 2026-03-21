@@ -1,108 +1,66 @@
-// /api/prices/refresh.js
-import { connectToDB } from "../utils/db.js";
+// server_api/prices/refresh.js
+import { db }         from "../utils/db.js";
+import { trades, priceCache } from "../schema/index.js";
+import { sql }        from "drizzle-orm";
 import { fetchLivePricesChunked } from "../utils/twelveData.js";
-import { fetchYahooPrices } from "../utils/yahooFinance.js";
-
-
-
-const TRADES_COLLECTION = "trades";
-const PRICES_COLLECTION = "prices";
-
+import { fetchYahooPrices }       from "../utils/yahooFinance.js";
 
 export default async function handler(req, res) {
   try {
-    // Optional: basic protection so randoms can't hammer this endpoint
-    // Set CRON_SECRET in Vercel env and call with ?secret=...
     const secret = process.env.CRON_SECRET;
     if (secret && req.query.secret !== secret) {
       return res.status(401).json({ error: "Unauthorised" });
     }
 
-    const db = await connectToDB();
-    const tradesCol = db.collection(TRADES_COLLECTION);
-    const pricesCol = db.collection(PRICES_COLLECTION);
+    // Find all tickers with a non-zero net position
+    const held = await db
+      .select({ ticker: trades.ticker })
+      .from(trades)
+      .groupBy(trades.ticker)
+      .having(sql`sum(${trades.quantity}::numeric) <> 0`);
 
-    // 1) Get all tickers with non-zero net quantity (held positions)
-    const pipeline = [
-      { $match: { type: { $in: ["trades", "crypto", "forex"] } } },
-      {
-        $group: {
-          _id: {
-            ticker: "$ticker",
-            currency: "$currency",
-            type: "$type",
-          },
-          netQty: { $sum: "$quantity" },
-        },
-      },
-      {
-        $match: {
-          netQty: { $ne: 0 },
-        },
-      },
-      {
-        $group: {
-          _id: "$_id.ticker",
-        },
-      },
-    ];
+    const symbols = held.map((r) => String(r.ticker || "").toUpperCase()).filter(Boolean);
 
-    const held = await tradesCol.aggregate(pipeline).toArray();
-    const symbols = held.map((x) => String(x._id || "").toUpperCase()).filter(Boolean);
-
-    if (symbols.length === 0) {
+    if (!symbols.length) {
       return res.status(200).json({ ok: true, refreshed: 0, symbols: [] });
     }
 
-    // 2) Fetch live prices
-    const now = new Date();
-
-    const ASX = symbols.filter((s) => s.endsWith(".AX"));
+    const ASX     = symbols.filter((s) => s.endsWith(".AX"));
     const NON_ASX = symbols.filter((s) => !s.endsWith(".AX"));
 
     const live = {};
+    if (NON_ASX.length) Object.assign(live, await fetchLivePricesChunked(NON_ASX));
+    if (ASX.length)     Object.assign(live, await fetchYahooPrices(ASX));
 
-    if (NON_ASX.length) {
-      Object.assign(live, await fetchLivePricesChunked(NON_ASX));
-    }
+    const now   = new Date();
+    const upsertRows = Object.entries(live)
+      .filter(([, item]) => item?.price != null)
+      .map(([symbol, item]) => ({
+        symbol,
+        price:    String(Number(item.price)),
+        currency: item.currency || "USD",
+        source:   item.source   || "live",
+        asOf:     new Date(item.asOf || now),
+        updatedAt: now,
+      }));
 
-    if (ASX.length) {
-      Object.assign(live, await fetchYahooPrices(ASX));
-    }
-
-
-    // 3) Upsert cache
-    const ops = symbols
-      .map((sym) => {
-        const item = live?.[sym];
-        if (!item?.price) return null;
-
-        return {
-          updateOne: {
-            filter: { symbol: sym },
-            update: {
-              $set: {
-                symbol: sym,
-                currency: item.currency || "USD",
-                price: Number(item.price),
-                source: item.source || "live",
-                asOf: item.asOf || now.toISOString(),
-                updatedAt: now,
-              },
-            },
-            upsert: true,
+    if (upsertRows.length) {
+      await db
+        .insert(priceCache)
+        .values(upsertRows)
+        .onConflictDoUpdate({
+          target: [priceCache.symbol],
+          set: {
+            price:     sql`excluded.price`,
+            currency:  sql`excluded.currency`,
+            source:    sql`excluded.source`,
+            asOf:      sql`excluded.as_of`,
+            updatedAt: sql`excluded.updated_at`,
           },
-        };
-      })
-      .filter(Boolean);
+        });
+    }
 
-    if (ops.length) await pricesCol.bulkWrite(ops);
-
-    return res.status(200).json({
-      ok: true,
-      refreshed: ops.length,
-      symbolsCount: symbols.length,
-    });
+    return res.status(200).json({ ok: true, refreshed: upsertRows.length, symbolsCount: symbols.length });
   } catch (err) {
     console.error("Prices refresh error:", err);
     return res.status(500).json({ error: "Server error" });

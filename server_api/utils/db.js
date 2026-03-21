@@ -1,22 +1,39 @@
-import { MongoClient } from "mongodb";
+// server_api/utils/db.js
+// Replaces the MongoDB connectToDB() helper.
+// Uses postgres.js as the low-level driver and Drizzle ORM for queries.
+//
+// Connection is cached on the global object so Vercel serverless functions
+// reuse it across warm invocations (same pattern as the old Mongo client).
 
-let cached = global._mongoCached;
+import postgres from "postgres";
+import { drizzle } from "drizzle-orm/postgres-js";
+import * as schema from "../schema/index.js";
+
+let cached = global._pgCached;
 
 if (!cached) {
-  cached = global._mongoCached = { client: null, db: null };
+  cached = global._pgCached = { sql: null, db: null };
 }
 
-export async function connectToDB() {
+export function getDb() {
   if (cached.db) return cached.db;
 
-  const uri = process.env.MONGO_URI;
-  if (!uri) throw new Error("Missing MONGO_URI env var");
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("Missing DATABASE_URL env var");
 
-  if (!cached.client) {
-    cached.client = new MongoClient(uri);
-    await cached.client.connect();
-  }
+  // max: 1 connection per serverless function instance is enough;
+  // connection pooling (e.g. PgBouncer / Supabase pooler) sits in front.
+  cached.sql = postgres(url, { max: 1, ssl: "require" });
+  cached.db  = drizzle(cached.sql, { schema });
 
-  cached.db = cached.client.db("FinanceWebApp");
   return cached.db;
 }
+
+// Convenience re-export so callers can do:
+//   import { db } from "../utils/db.js";
+// identical to the old pattern.
+export const db = new Proxy({}, {
+  get(_t, prop) {
+    return getDb()[prop];
+  },
+});

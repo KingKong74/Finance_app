@@ -1,4 +1,16 @@
-import { connectToDB } from "../utils/db.js";
+// server_api/ledger/importPreview.js
+import { db } from "../utils/db.js";
+import { trades, forexTrades, cashEntries, dividends, cashReportSnapshots } from "../schema/index.js";
+import { inArray } from "drizzle-orm";
+
+function tableForTab(tab) {
+  const t = String(tab || "").toLowerCase();
+  if (t === "cash")        return { table: cashEntries,         col: cashEntries.importKey };
+  if (t === "dividends")   return { table: dividends,           col: dividends.importKey };
+  if (t === "forex")       return { table: forexTrades,         col: forexTrades.importKey };
+  if (t === "cash_report") return { table: cashReportSnapshots, col: cashReportSnapshots.importKey };
+  return { table: trades, col: trades.importKey }; // trades | crypto
+}
 
 export default async function handler(req, res) {
   try {
@@ -12,24 +24,16 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "keys[] required" });
     }
 
-    const db = await connectToDB();
+    const { table, col } = tableForTab(tab);
 
-    // Decide collection based on tab
-    const t = String(tab || "").toLowerCase();
-    const collectionName =
-      t === "cash" ? "cash" :
-      t === "dividends" ? "dividends" :
-      "trades";
-
-    const col = db.collection(collectionName);
-
-    const existing = await col
-      .find({ importKey: { $in: keys } }, { projection: { importKey: 1 } })
-      .toArray();
+    const existing = await db
+      .select({ importKey: col })
+      .from(table)
+      .where(inArray(col, keys));
 
     return res.status(200).json({
-      ok: true,
-      existingKeys: existing.map((d) => d.importKey),
+      ok:           true,
+      existingKeys: existing.map((r) => r.importKey).filter(Boolean),
     });
   } catch (err) {
     console.error("importPreview error:", err);

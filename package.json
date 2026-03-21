@@ -6,16 +6,21 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio",
+    "db:push": "drizzle-kit push"
   },
   "devDependencies": {
+    "drizzle-kit": "^0.31.10",
     "vite": "^7.2.4"
   },
   "dependencies": {
-    "mongodb": "^7.0.0",
-    "mongoose": "^9.0.2",
+    "drizzle-orm": "^0.45.1",
     "papaparse": "^5.5.3",
     "pdf-parse": "^2.4.5",
+    "postgres": "^3.4.8",
     "react-router-dom": "^7.11.0",
     "recharts": "^3.6.0"
   }

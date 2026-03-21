@@ -1,94 +1,93 @@
-// /api/index.js 
-import fx from "../server_api/fx.js";
+// api/index.js
+// Central Vercel serverless function. All API routes flow through here.
+// URL pattern: /api?action=<route>&sub=<sub-path>
+//
+// To add a new route, import the handler and add it to `table`.
 
-import ledgerIndex from "../server_api/ledger/index.js";
-import ledgerImport from "../server_api/ledger/import.js";
-import ledgerImportPreview from "../server_api/ledger/importPreview.js";
-import ledgerId from "../server_api/ledger/[id].js";
+import fx                from "../server_api/fx.js";
 
-import pricesIndex from "../server_api/prices/index.js";
-import pricesRefresh from "../server_api/prices/refresh.js";
+import ledgerIndex       from "../server_api/ledger/index.js";
+import ledgerImport      from "../server_api/ledger/import.js";
+import ledgerPreview     from "../server_api/ledger/importPreview.js";
+import ledgerId          from "../server_api/ledger/[id].js";
 
-import overviewAccount from "../server_api/overview/account.js";
+import pricesIndex       from "../server_api/prices/index.js";
+import pricesRefresh     from "../server_api/prices/refresh.js";
+
+import overviewAccount   from "../server_api/overview/account.js";
 import overviewCashReport from "../server_api/overview/cash-report.js";
 
-// NEW: Transactions endpoints
-import txImportPreview from "../server_api/transactions/importPreview.js";
-import txImport from "../server_api/transactions/import.js";
-import txAccounts from "../server_api/transactions/accounts.js";
+import txImportPreview   from "../server_api/transactions/importPreview.js";
+import txImport          from "../server_api/transactions/import.js";
+import txAccounts        from "../server_api/transactions/accounts.js";
 
+// ---------------------------------------------------------------------------
+// Route table  action -> handler
+// ---------------------------------------------------------------------------
 const table = {
-  fx,
-
-  // ledger
-  "ledger": ledgerIndex,
-  "ledger/import": ledgerImport,
-  "ledger/importPreview": ledgerImportPreview,
-  "ledger/[id]": ledgerId,
-
-  // prices
-  "prices": pricesIndex,
-  "prices/refresh": pricesRefresh,
-
-  // overview
-  "overview/account": overviewAccount,
-  "overview/cash-report": overviewCashReport,
-
-  // transactions (NEW)
+  "fx":                       fx,
+  "ledger":                   ledgerIndex,
+  "ledger/import":            ledgerImport,
+  "ledger/importPreview":     ledgerPreview,
+  "prices":                   pricesIndex,
+  "prices/refresh":           pricesRefresh,
+  "overview/account":         overviewAccount,
+  "overview/cash-report":     overviewCashReport,
   "transactions/importPreview": txImportPreview,
-  "transactions/import": txImport,
-  "transactions/accounts": txAccounts,
+  "transactions/import":      txImport,
+  "transactions/accounts":    txAccounts,
+  // Dynamic route — matched below
+  "ledger/[id]":              ledgerId,
 };
 
-function pickKey(action, sub) {
+// ---------------------------------------------------------------------------
+// Route resolution
+// ---------------------------------------------------------------------------
+function resolveKey(action, sub) {
   const a = String(action || "").trim();
-  const s = String(sub || "").trim();
-  if (!a) return "";
+  const s = String(sub    || "").trim();
+  if (!a) return null;
 
-  if (!s) return a;
+  // No sub-path — direct lookup
+  if (!s) return table[a] ? a : null;
 
-  // exact match first (eg ledger/import)
+  // Exact match first (e.g. "ledger/import")
   const exact = `${a}/${s}`;
   if (table[exact]) return exact;
 
-  // dynamic id support: /api/ledger/<id> -> ledger/[id]
-  if (a === "ledger" && s && !s.includes("/")) return "ledger/[id]";
-  
-  // dynamic id support: /api/transactions/accounts/<id> -> transactions/accounts
-  if (a === "transactions" && s === "accounts") return "transactions/accounts";
+  // Dynamic id: /api?action=ledger&sub=<uuid>
+  if (a === "ledger" && !s.includes("/")) return "ledger/[id]";
 
-  return exact;
+  return null;
 }
 
+// ---------------------------------------------------------------------------
+// Handler
+// ---------------------------------------------------------------------------
 export default async function handler(req, res) {
   try {
-    const action = String(req.query.action || "");
-    const sub = String(req.query.sub || "");
+    const action = String(req.query.action || "").trim();
+    const sub    = String(req.query.sub    || "").trim();
 
-    const key = pickKey(action, sub);
-    const fn = table[key];
+    const key = resolveKey(action, sub);
+    const fn  = key ? table[key] : null;
 
     if (!fn) {
       return res.status(404).json({
-        error: `Unknown route`,
-        got: { action, sub, key },
+        error:   "Unknown route",
+        got:     { action, sub },
         allowed: Object.keys(table),
       });
     }
 
-    // If dynamic ledger id route, attach req.query.id
+    // For dynamic ledger id routes, attach the id to req.query
     if (key === "ledger/[id]") {
       req.query.id = sub;
-    }
-    
-    // If transactions/accounts with id, attach req.query.id
-    if (key === "transactions/accounts" && sub && sub !== "accounts") {
-      req.query.id = sub.split("/")[1]; // e.g., accounts/123 -> id=123
     }
 
     return await fn(req, res);
   } catch (e) {
-    console.error("Admin router error:", e);
+    console.error("Router error:", e);
     return res.status(500).json({ error: e.message || "Server error" });
   }
 }

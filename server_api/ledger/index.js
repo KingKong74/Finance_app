@@ -1,131 +1,200 @@
-// api/ledger/index.js
-import { connectToDB } from "../utils/db.js";
+// server_api/ledger/index.js
+import { db }         from "../utils/db.js";
+import { trades, forexTrades, cashEntries, dividends } from "../schema/index.js";
+import { eq, desc } from "drizzle-orm";
+import { num, normUpper, normStr, makeImportKey, deriveDate, deriveTs } from "../utils/shared.js";
 
-function normaliseTab(tab) {
-  const t = String(tab || "").toLowerCase();
-  // ✅ add cash_report
-  const allowed = ["trades", "crypto", "forex", "cash", "dividends", "cash_report"];
-  return allowed.includes(t) ? t : null;
+const ALLOWED_TABS = ["trades", "crypto", "forex", "cash", "dividends"];
+
+function tabIsValid(tab) {
+  return ALLOWED_TABS.includes(String(tab || "").toLowerCase());
 }
 
-function collectionForTab(tab) {
-  if (tab === "cash") return "cash";
-  if (tab === "dividends") return "dividends";
-  if (tab === "cash_report") return "cash_reports"; // ✅ new collection
-  return "trades"; // trades/crypto/forex live in "trades" collection with type
+// Map each tab to which Drizzle table it writes/reads
+function tableForTab(tab) {
+  if (tab === "cash")     return cashEntries;
+  if (tab === "dividends") return dividends;
+  if (tab === "forex")    return forexTrades;
+  return trades; // "trades" | "crypto"
 }
 
-function queryForTab(tab) {
-  if (tab === "cash") return {};
-  if (tab === "dividends") return {};
-  if (tab === "cash_report") return {}; // ✅ snapshots, no type filter
-  return { type: tab };
-}
+// Normalise a DB row back to the shape the frontend expects
+function normaliseRow(row, tab) {
+  if (tab === "cash") {
+    return {
+      _id:        row.id,
+      date:       row.settledAt ? new Date(row.settledAt).toISOString().slice(0, 10) : "",
+      ts:         row.settledAt ? new Date(row.settledAt).toISOString().slice(0, 19) : "",
+      amount:     Number(row.amount),
+      currency:   row.currency,
+      entryType:  row.entryType,
+      broker:     row.broker,
+      note:       row.note || "",
+      importKey:  row.importKey,
+    };
+  }
 
-function deriveTs(payload) {
-  // prefer ts, else fall back to date midnight
-  const ts = payload?.ts;
-  if (typeof ts === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(ts)) return ts;
-  const date = payload?.date;
-  if (typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date)) return `${date}T00:00:00`;
-  return "";
+  if (tab === "dividends") {
+    return {
+      _id:       row.id,
+      date:      row.paidAt ? new Date(row.paidAt).toISOString().slice(0, 10) : "",
+      ts:        row.paidAt ? new Date(row.paidAt).toISOString().slice(0, 19) : "",
+      amount:    Number(row.amount),
+      currency:  row.currency,
+      ticker:    row.ticker || "",
+      broker:    row.broker,
+      note:      row.note || "",
+      importKey: row.importKey,
+    };
+  }
+
+  if (tab === "forex") {
+    return {
+      _id:         row.id,
+      date:        row.tradedAt ? new Date(row.tradedAt).toISOString().slice(0, 10) : "",
+      ts:          row.tradedAt ? new Date(row.tradedAt).toISOString().slice(0, 19) : "",
+      ticker:      row.ticker,
+      quantity:    Number(row.quantity),
+      price:       Number(row.price),
+      proceeds:    Number(row.proceeds),
+      fee:         Number(row.fee),
+      feeCurrency: row.feeCurrency,
+      currency:    row.currency,
+      broker:      row.broker,
+      realisedPL:  Number(row.realisedPl),
+      type:        "forex",
+      importKey:   row.importKey,
+    };
+  }
+
+  // trades | crypto
+  return {
+    _id:         row.id,
+    date:        row.tradedAt ? new Date(row.tradedAt).toISOString().slice(0, 10) : "",
+    ts:          row.tradedAt ? new Date(row.tradedAt).toISOString().slice(0, 19) : "",
+    ticker:      row.ticker,
+    quantity:    Number(row.quantity),
+    price:       Number(row.price),
+    proceeds:    Number(row.proceeds),
+    fee:         Number(row.fee),
+    feeCurrency: row.feeCurrency,
+    currency:    row.currency,
+    broker:      row.broker,
+    realisedPL:  Number(row.realisedPl),
+    type:        row.type,
+    importKey:   row.importKey,
+  };
 }
 
 export default async function handler(req, res) {
   try {
-    const tab = normaliseTab(req.query.tab);
-    if (!tab) return res.status(400).json({ error: "Missing/invalid tab" });
+    const tab = String(req.query.tab || "").toLowerCase();
+    if (!tabIsValid(tab)) return res.status(400).json({ error: "Missing/invalid tab" });
 
-    const db = await connectToDB();
-    const collection = db.collection(collectionForTab(tab));
+    const table = tableForTab(tab);
 
+    // ── GET ──────────────────────────────────────────────────────────────────
     if (req.method === "GET") {
-      const query = queryForTab(tab);
+      let rows;
 
-      // ✅ cash_report should sort by ts/date but doesn't need ticker/type logic
-      const rows = await collection.find(query).sort({ date: -1, ts: -1 }).toArray();
-      return res.status(200).json(rows);
+      if (tab === "cash") {
+        rows = await db.select().from(cashEntries).orderBy(desc(cashEntries.settledAt));
+      } else if (tab === "dividends") {
+        rows = await db.select().from(dividends).orderBy(desc(dividends.paidAt));
+      } else if (tab === "forex") {
+        rows = await db.select().from(forexTrades).orderBy(desc(forexTrades.tradedAt));
+      } else {
+        // trades | crypto — both live in the trades table, filtered by type
+        rows = await db.select().from(trades)
+          .where(eq(trades.type, tab))
+          .orderBy(desc(trades.tradedAt));
+      }
+
+      return res.status(200).json(rows.map((r) => normaliseRow(r, tab)));
     }
 
+    // ── POST ─────────────────────────────────────────────────────────────────
     if (req.method === "POST") {
-      // ✅ cash_report is import-only (comes from IBKR statement parsing)
-      if (tab === "cash_report") {
-        return res.status(405).json({ error: "cash_report is import-only" });
-      }
-
       const payload = req.body || {};
 
-      // ───────────── CASH ─────────────
       if (tab === "cash") {
-        if (!payload.date) return res.status(400).json({ error: "date is required" });
-        if (payload.amount === undefined || payload.amount === null || payload.amount === "")
-          return res.status(400).json({ error: "amount is required" });
+        if (!payload.date)   return res.status(400).json({ error: "date is required" });
+        if (payload.amount == null) return res.status(400).json({ error: "amount is required" });
 
-        const amountNum = Number(payload.amount || 0);
+        const amount    = num(payload.amount);
+        const settledAt = new Date(deriveTs(payload) || `${payload.date}T00:00:00`);
+        const entryType = normStr(payload.entryType || (amount >= 0 ? "deposit" : "withdrawal")).toLowerCase();
+        const importKey = makeImportKey("cash", { ...payload, amount, entryType });
 
-        const doc = {
-          date: payload.date, // "YYYY-MM-DD"
-          ts: deriveTs(payload), // "YYYY-MM-DDT.."
-          amount: amountNum,
-          currency: payload.currency || "AUD",
-          broker: payload.broker || "",
-          entryType: payload.entryType || (amountNum >= 0 ? "deposit" : "withdrawal"),
-          note: payload.note || "",
+        const [row] = await db.insert(cashEntries).values({
+          broker: normStr(payload.broker || ""),
+          currency: normUpper(payload.currency || "AUD"),
+          entryType,
+          settledAt,
+          amount:    String(amount),
+          note:      normStr(payload.note || ""),
+          importKey,
           createdAt: new Date(),
-        };
+        }).returning();
 
-        const result = await collection.insertOne(doc);
-        return res.status(201).json({ _id: result.insertedId });
+        return res.status(201).json({ _id: row.id });
       }
 
-      // ───────────── DIVIDENDS ─────────────
       if (tab === "dividends") {
-        if (!payload.date) return res.status(400).json({ error: "date is required" });
-        if (payload.amount === undefined || payload.amount === null || payload.amount === "")
-          return res.status(400).json({ error: "amount is required" });
+        if (!payload.date)   return res.status(400).json({ error: "date is required" });
+        if (payload.amount == null) return res.status(400).json({ error: "amount is required" });
 
-        const amountNum = Number(payload.amount || 0);
+        const amount    = num(payload.amount);
+        const paidAt    = new Date(deriveTs(payload) || `${payload.date}T00:00:00`);
+        const importKey = makeImportKey("dividends", payload);
 
-        const doc = {
-          date: payload.date,
-          ts: deriveTs(payload),
-          amount: amountNum,
-          currency: payload.currency || "USD",
-          ticker: payload.ticker ? String(payload.ticker).toUpperCase() : "",
-          broker: payload.broker || "IBKR",
-          note: payload.note || "",
+        const [row] = await db.insert(dividends).values({
+          broker:    normStr(payload.broker || "IBKR"),
+          ticker:    normUpper(payload.ticker || ""),
+          currency:  normUpper(payload.currency || "USD"),
+          paidAt,
+          amount:    String(amount),
+          note:      normStr(payload.note || ""),
+          importKey,
           createdAt: new Date(),
-        };
+        }).returning();
 
-        const result = await collection.insertOne(doc);
-        return res.status(201).json({ _id: result.insertedId });
+        return res.status(201).json({ _id: row.id });
       }
 
-      // ───────────── TRADES / CRYPTO / FOREX ─────────────
+      // trades | crypto | forex
       if (!payload.ticker) return res.status(400).json({ error: "ticker is required" });
-      if (!payload.date) return res.status(400).json({ error: "date is required" });
+      if (!payload.date)   return res.status(400).json({ error: "date is required" });
 
-      const doc = {
-        ticker: String(payload.ticker).toUpperCase(),
-        date: payload.date, // "YYYY-MM-DD"
-        ts: deriveTs(payload),
-        quantity: Number(payload.quantity || 0), // negative sells stay negative ✅
-        price: Number(payload.price || 0),
-        proceeds:
-          payload.proceeds != null
-            ? Number(payload.proceeds || 0)
-            : -(Number(payload.quantity || 0) * Number(payload.price || 0)), // ✅ keep consistent with import.js
-        fee: Math.abs(Number(payload.fee || 0)),
-        feeCurrency: payload.feeCurrency ? String(payload.feeCurrency).toUpperCase() : "AUD", // ✅ default
-        broker: payload.broker || "IBKR",
-        currency: payload.currency || "USD",
-        realisedPL: Number(payload.realisedPL || 0),
-        type: tab,
-        createdAt: new Date(),
+      const quantity  = num(payload.quantity);
+      const price     = num(payload.price);
+      const fee       = Math.abs(num(payload.fee));
+      const proceeds  = payload.proceeds != null ? num(payload.proceeds) : -(quantity * price);
+      const tradedAt  = new Date(deriveTs(payload) || `${payload.date}T00:00:00`);
+      const importKey = makeImportKey(tab, payload);
+
+      const commonFields = {
+        broker:      normStr(payload.broker || "IBKR"),
+        ticker:      normUpper(payload.ticker),
+        currency:    normUpper(payload.currency || "USD"),
+        feeCurrency: normUpper(payload.feeCurrency || "AUD"),
+        tradedAt,
+        quantity:    String(quantity),
+        price:       String(price),
+        proceeds:    String(proceeds),
+        fee:         String(fee),
+        realisedPl:  String(num(payload.realisedPL)),
+        importKey,
+        createdAt:   new Date(),
       };
 
-      const result = await collection.insertOne(doc);
-      return res.status(201).json({ _id: result.insertedId });
+      if (tab === "forex") {
+        const [row] = await db.insert(forexTrades).values(commonFields).returning();
+        return res.status(201).json({ _id: row.id });
+      }
+
+      const [row] = await db.insert(trades).values({ ...commonFields, type: tab }).returning();
+      return res.status(201).json({ _id: row.id });
     }
 
     res.setHeader("Allow", ["GET", "POST"]);

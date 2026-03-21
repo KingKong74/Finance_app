@@ -1,10 +1,8 @@
-// /api/overview/accounts.js
-import { connectToDB } from "../utils/db.js";
-
-function normBroker(x) {
-  const b = String(x || "").trim();
-  return b || "Unknown";
-}
+// server_api/overview/account.js
+import { db }       from "../utils/db.js";
+import { trades, dividends } from "../schema/index.js";
+import { sql }      from "drizzle-orm";
+import { num }      from "../utils/shared.js";
 
 export default async function handler(req, res) {
   try {
@@ -13,86 +11,68 @@ export default async function handler(req, res) {
       return res.status(405).end(`Method ${req.method} Not Allowed`);
     }
 
-    const db = await connectToDB();
-    const tradesCol = db.collection("trades");
-    const dividendsCol = db.collection("dividends");
+    // Realised P/L + fees aggregated by broker (trades table holds trades & crypto)
+    const tradesAgg = await db
+      .select({
+        broker:     trades.broker,
+        realisedPl: sql`sum(coalesce(${trades.realisedPl}::numeric, 0))`.as("realisedPl"),
+        fee:        sql`sum(coalesce(${trades.fee}::numeric, 0))`.as("fee"),
+      })
+      .from(trades)
+      .groupBy(trades.broker);
 
-    // Trades: realisedPL by broker + totals (optional)
-    const tradesAgg = await tradesCol
-      .aggregate([
-        {
-          $group: {
-            _id: "$broker",
-            realisedPL: { $sum: { $ifNull: ["$realisedPL", 0] } },
-            fee: { $sum: { $ifNull: ["$fee", 0] } },
-          },
-        },
-      ])
-      .toArray();
+    // Dividends by broker
+    const divAgg = await db
+      .select({
+        broker:    dividends.broker,
+        dividends: sql`sum(coalesce(${dividends.amount}::numeric, 0))`.as("dividends"),
+      })
+      .from(dividends)
+      .groupBy(dividends.broker);
 
-    // Dividends: amount by broker
-    const divAgg = await dividendsCol
-      .aggregate([
-        {
-          $group: {
-            _id: "$broker",
-            dividends: { $sum: { $ifNull: ["$amount", 0] } },
-          },
-        },
-      ])
-      .toArray();
-
-    // Merge by broker
+    // Merge
     const byBroker = new Map();
 
     for (const t of tradesAgg) {
-      const broker = normBroker(t._id);
+      const broker = String(t.broker || "Unknown").trim() || "Unknown";
       byBroker.set(broker, {
-        name: broker,
-        total: 0, // we’ll improve this once you wire positions/value
-        cash: 0,  // intentionally not implemented yet
-        pl: Number(t.realisedPL || 0) + 0, // + dividends added below
-        dayPL: 0, // placeholder until live pricing/day change
-        meta: { fee: Number(t.fee || 0) },
+        name:   broker,
+        total:  0,
+        cash:   0,
+        pl:     num(t.realisedPl),
+        dayPL:  0,
+        meta:   { fee: num(t.fee) },
       });
     }
 
     for (const d of divAgg) {
-      const broker = normBroker(d._id);
+      const broker = String(d.broker || "Unknown").trim() || "Unknown";
       if (!byBroker.has(broker)) {
-        byBroker.set(broker, {
-          name: broker,
-          total: 0,
-          cash: 0,
-          pl: 0,
-          dayPL: 0,
-          meta: { fee: 0 },
-        });
+        byBroker.set(broker, { name: broker, total: 0, cash: 0, pl: 0, dayPL: 0, meta: { fee: 0 } });
       }
       const row = byBroker.get(broker);
-      row.meta.dividends = Number(d.dividends || 0);
-      row.pl = Number(row.pl || 0) + Number(d.dividends || 0);
+      row.meta.dividends = num(d.dividends);
+      row.pl = num(row.pl) + num(d.dividends);
     }
 
     const brokerAccounts = Array.from(byBroker.values()).sort((a, b) =>
       a.name.localeCompare(b.name)
     );
 
-    // All Accounts (sum)
     const all = brokerAccounts.reduce(
-      (acc, a) => {
-        acc.total += Number(a.total || 0);
-        acc.cash += Number(a.cash || 0);
-        acc.pl += Number(a.pl || 0);
-        acc.dayPL += Number(a.dayPL || 0);
-        return acc;
-      },
+      (acc, a) => ({
+        ...acc,
+        total: acc.total + num(a.total),
+        cash:  acc.cash  + num(a.cash),
+        pl:    acc.pl    + num(a.pl),
+        dayPL: acc.dayPL + num(a.dayPL),
+      }),
       { name: "All Accounts", total: 0, cash: 0, pl: 0, dayPL: 0 }
     );
 
     return res.status(200).json([all, ...brokerAccounts]);
   } catch (err) {
-    console.error("overview/accounts error:", err);
+    console.error("overview/account error:", err);
     return res.status(500).json({ error: "Failed to build accounts" });
   }
 }

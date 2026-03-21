@@ -1,5 +1,7 @@
-// api/fx.js
-import { connectToDB } from "./utils/db.js"; // adjust path if needed
+// server_api/fx.js
+import { db }   from "./utils/db.js";
+import { fxRates } from "./schema/index.js";
+import { eq, and } from "drizzle-orm";
 
 function clampInt(x, min, max, fallback) {
   const n = Number(x);
@@ -9,46 +11,33 @@ function clampInt(x, min, max, fallback) {
 
 export default async function handler(req, res) {
   try {
-    // ✅ Always AUD base (ignore req.query.base)
-    const base = "AUD";
+    const base = "AUD"; // always AUD base
+    const ttl  = clampInt(req.query.ttl ?? 6 * 60 * 60, 60, 7 * 24 * 60 * 60, 6 * 60 * 60);
 
-    // ttl is seconds
-    const ttl = clampInt(
-      req.query.ttl ?? 6 * 60 * 60,
-      60,
-      7 * 24 * 60 * 60,
-      6 * 60 * 60
-    ); // default 6h
+    // 1) Check cache — read all rows for this base, assemble rates object
+    const cached = await db.select().from(fxRates).where(eq(fxRates.base, base));
 
-    const db = await connectToDB();
-    const col = db.collection("fx_rates");
+    if (cached.length > 0) {
+      const newest = cached.reduce((a, b) =>
+        new Date(a.fetchedAt) > new Date(b.fetchedAt) ? a : b
+      );
+      const ageMs = Date.now() - new Date(newest.fetchedAt).getTime();
 
-    // helpful indexes (safe to run repeatedly)
-    await col.createIndex({ base: 1 }, { unique: true });
-    await col.createIndex({ fetchedAt: -1 });
-
-    // 1) Try cache first (fresh within ttl)
-    const cached = await col.findOne({ base });
-
-    if (cached?.rates && cached?.fetchedAt) {
-      const ageMs = Date.now() - new Date(cached.fetchedAt).getTime();
       if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= ttl * 1000) {
-        // ensure base is present + correct
-        const rates = { ...(cached.rates || {}) };
+        const rates = Object.fromEntries(cached.map((r) => [r.quote, Number(r.rate)]));
         rates[base] = 1;
-
         return res.status(200).json({
           base,
           rates,
-          fetchedAt: cached.fetchedAt,
-          provider: cached.provider || "cache",
-          source: "cache",
+          fetchedAt: newest.fetchedAt,
+          provider:  newest.provider || "cache",
+          source:    "cache",
           ttl,
         });
       }
     }
 
-    // 2) Fetch live (AUD base)
+    // 2) Fetch live
     const url = `https://open.er-api.com/v6/latest/${base}`;
     let liveJson = null;
 
@@ -57,52 +46,48 @@ export default async function handler(req, res) {
       if (!r.ok) throw new Error(`FX provider failed: ${r.status}`);
       liveJson = await r.json();
     } catch (e) {
-      // 3) Provider failed -> fall back to ANY cached rates (even stale)
-      if (cached?.rates) {
-        const rates = { ...(cached.rates || {}) };
+      // Fall back to stale cache if available
+      if (cached.length > 0) {
+        const newest = cached.reduce((a, b) =>
+          new Date(a.fetchedAt) > new Date(b.fetchedAt) ? a : b
+        );
+        const rates = Object.fromEntries(cached.map((r) => [r.quote, Number(r.rate)]));
         rates[base] = 1;
-
         return res.status(200).json({
           base,
           rates,
-          fetchedAt: cached.fetchedAt,
-          provider: cached.provider || "cache",
-          source: "stale-cache",
+          fetchedAt: newest.fetchedAt,
+          provider:  newest.provider || "cache",
+          source:    "stale-cache",
           ttl,
-          warning: "Live FX failed; served cached rates.",
+          warning:   "Live FX failed; served cached rates.",
         });
       }
-
-      // no cache either
-      return res
-        .status(502)
-        .json({ error: "FX provider failed and no cache available" });
+      return res.status(502).json({ error: "FX provider failed and no cache available" });
     }
 
-    const rates = { ...(liveJson?.rates || {}) };
-    rates[base] = 1; // ✅ guarantee base is present
-    const fetchedAt = new Date().toISOString();
+    const liveRates  = liveJson?.rates || {};
+    const fetchedAt  = new Date();
+    const provider   = "open.er-api.com";
 
-    // 4) Upsert cache (one doc per base)
-    await col.updateOne(
-      { base },
-      {
-        $set: {
-          base,
-          rates,
-          fetchedAt,
-          provider: "open.er-api.com",
-          updatedAt: new Date(),
-        },
-      },
-      { upsert: true }
+    // 3) Upsert each quote into the fx_rates table
+    const upserts = Object.entries(liveRates).map(([quote, rate]) =>
+      db.insert(fxRates)
+        .values({ base, quote, rate: String(rate), fetchedAt, provider })
+        .onConflictDoUpdate({
+          target: [fxRates.base, fxRates.quote],
+          set: { rate: String(rate), fetchedAt, provider, updatedAt: new Date() },
+        })
     );
+    await Promise.all(upserts);
+
+    const rates = { ...liveRates, [base]: 1 };
 
     return res.status(200).json({
       base,
       rates,
-      fetchedAt,
-      provider: "open.er-api.com",
+      fetchedAt: fetchedAt.toISOString(),
+      provider,
       source: "live",
       ttl,
     });

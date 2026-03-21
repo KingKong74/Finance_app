@@ -1,93 +1,59 @@
-// /api/overview/cash-report.js
-import { connectToDB } from "../utils/db.js";
-
-function normUpper(x) {
-  return String(x || "").trim().toUpperCase();
-}
-
-function isIsoDate(s) {
-  return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
-}
-function isIsoDateTime(s) {
-  return typeof s === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(s);
-}
-function keyOf(r) {
-  const d = String(r?.date || "");
-  const ts = String(r?.ts || "");
-  if (isIsoDate(d)) return d;
-  if (isIsoDateTime(ts)) return ts.slice(0, 10);
-  return "";
-}
-function num(x) {
-  if (typeof x === "string") x = x.replace(/,/g, "");
-  const n = Number(x);
-  return Number.isFinite(n) ? n : 0;
-}
+// server_api/overview/cash-report.js
+import { db }                  from "../utils/db.js";
+import { cashReportSnapshots } from "../schema/index.js";
+import { and, eq, desc }       from "drizzle-orm";
+import { num, normUpper }      from "../utils/shared.js";
 
 export default async function handler(req, res) {
   try {
-    const broker = normUpper(req.query.broker || "IBKR");
-    const account = String(req.query.account || "").trim();
+    const broker  = normUpper(req.query.broker || "IBKR");
+    const wanted  = ["AUD", "USD", "EUR"];
 
-    const db = await connectToDB();
-    const col = db.collection("cash_reports");
-
-    const query = {
-      broker,
-      label: "Ending Cash",
-    };
-    if (account) query.account = account;
-
-    // Pull recent-ish rows; we'll pick latest per currency in JS
-    const rows = await col
-      .find(query)
-      .sort({ date: -1, ts: -1, importedAt: -1 })
-      .limit(200)
-      .toArray();
+    // Pull recent snapshots for this broker, label = "Ending Cash"
+    const rows = await db
+      .select()
+      .from(cashReportSnapshots)
+      .where(
+        and(
+          eq(cashReportSnapshots.broker, broker),
+          eq(cashReportSnapshots.label, "Ending Cash")
+        )
+      )
+      .orderBy(desc(cashReportSnapshots.snapshotDate))
+      .limit(200);
 
     if (!rows.length) {
-      return res.status(404).json({
-        error: "No cash report found",
-        broker,
-        account: account || null,
-      });
+      return res.status(404).json({ error: "No cash report found", broker });
     }
 
-    // Latest per currency (AUD/USD/EUR)
-    const wanted = ["AUD", "USD", "EUR"];
-    const latestPerCcy = new Map(); // ccy -> row
-
+    // Latest row per currency
+    const latestPerCcy = new Map();
     for (const r of rows) {
-      const ccy = normUpper(r?.currency || "");
+      const ccy = normUpper(r.currency || "");
       if (!wanted.includes(ccy)) continue;
-
-      const prev = latestPerCcy.get(ccy);
-      const k = keyOf(r);
-      const pk = prev ? keyOf(prev) : "";
-
-      if (!prev || (k && k > pk)) latestPerCcy.set(ccy, r);
+      if (!latestPerCcy.has(ccy)) latestPerCcy.set(ccy, r);
+      // rows are already sorted desc so first hit = latest
     }
 
-    // Determine "asOf" as the max date across currencies we found
+    // asOf = max snapshotDate across all found currencies
     let asOf = "";
     for (const r of latestPerCcy.values()) {
-      const k = keyOf(r);
-      if (k && k > asOf) asOf = k;
+      const d = r.snapshotDate ? new Date(r.snapshotDate).toISOString().slice(0, 10) : "";
+      if (d > asOf) asOf = d;
     }
 
     const balances = {
-      AUD: num(latestPerCcy.get("AUD")?.amount || 0),
-      USD: num(latestPerCcy.get("USD")?.amount || 0),
-      EUR: num(latestPerCcy.get("EUR")?.amount || 0),
+      AUD: num(latestPerCcy.get("AUD")?.balance ?? 0),
+      USD: num(latestPerCcy.get("USD")?.balance ?? 0),
+      EUR: num(latestPerCcy.get("EUR")?.balance ?? 0),
     };
 
     return res.status(200).json({
       broker,
-      account: account || "",
       asOf,
       base: "AUD",
       balances,
-      source: "db:cash_reports(label=Ending Cash)",
+      source: "db:cash_report_snapshots",
     });
   } catch (e) {
     console.error("cash-report error:", e);
